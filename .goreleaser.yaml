@@ -1,0 +1,65 @@
+# ⚓ Port Hero — release configuration (goreleaser).
+version: 2
+
+project_name: port-hero
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: port-hero
+    main: .
+    ldflags:
+      - -s -w
+      - -X github.com/golive-ly/port-hero/internal/tui.Version={{.Version}}
+      - -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "merge conflict"
+
+release:
+  github:
+    owner: golive-ly
+    name: port-hero
+  draft: true
+
+# Homebrew tap formula generation.
+brews:
+  - name: port-hero
+    homepage: "https://github.com/golive-ly/port-hero"
+    description: "The local port manager you actually trust — inspect, trace and gracefully kill processes on a port."
+    license: MIT
+    test: |
+      system "#{bin}/port-hero", "--version"
+    install: |
+      bin.install "port-hero"

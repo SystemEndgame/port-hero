@@ -1,0 +1,79 @@
+# ⚓ Port Hero — golangci-lint configuration (v2 schema).
+# Run locally with:  golangci-lint run
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - misspell
+    - unconvert
+    - gocritic
+    - revive
+    - prealloc
+    - gocyclo
+    - gosec
+    - nakedret
+    - whitespace
+    - godot
+    - dogsled
+    - dupl
+  disable:
+    - exhaustruct   # too strict for struct literals in tests
+    - wrapcheck     # explicit error wrapping is handled at package boundaries
+    - err113        # allow fmt.Errorf with %w
+    - ireturn       # interfaces in small internal packages are fine
+    - mnd           # magic numbers are intentional in port tables
+    - funlen        # long switch tables are fine
+    - lll           # long lsof/ps command strings are inherent
+  settings:
+    gocyclo:
+      min-complexity: 15
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: var-naming
+    gosec:
+      excludes:
+        # G204/G304: launching lsof/ps/netstat/docker/git and reading the
+        # resolved .git/HEAD are the core, user-level functions of a system
+        # introspection tool. Port Hero never escalates privileges and only
+        # inspects the invoking user's own processes (the Safety Shield
+        # rejects foreign processes).
+        - G204
+        - G304
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - gosec
+          - dupl
+          - gocritic
+      # Bubble Tea's Model contract requires value receivers: Update and
+      # View are called on the copied model. hugeParam is a false positive
+      # for the idiomatic tea.Model pattern.
+      - path: internal/tui/
+        linters:
+          - gocritic
+        text: hugeParam
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

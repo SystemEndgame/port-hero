@@ -1,0 +1,13 @@
+# Build artifacts
+/binaries/
+/port-hero
+/port-hero-bin
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+*.test
+*.out
