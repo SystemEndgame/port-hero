@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/golive-ly/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
 // Severity levels for violations.

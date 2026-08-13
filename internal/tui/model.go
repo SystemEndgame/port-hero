@@ -6,10 +6,10 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/golive-ly/port-hero/internal/guardrails"
-	"github.com/golive-ly/port-hero/internal/inspector"
-	"github.com/golive-ly/port-hero/internal/killer"
-	"github.com/golive-ly/port-hero/internal/restart"
+	"github.com/SystemEndgame/port-hero/internal/guardrails"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/killer"
+	"github.com/SystemEndgame/port-hero/internal/restart"
 )
 
 // Version is stamped at build time via -ldflags.

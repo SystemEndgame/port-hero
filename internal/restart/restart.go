@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golive-ly/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
 // Result reports a restart outcome.

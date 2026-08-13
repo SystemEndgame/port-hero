@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golive-ly/port-hero/internal/guardrails"
-	"github.com/golive-ly/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/guardrails"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
 func me() string { return guardrails.CurrentUser() }

@@ -5,9 +5,9 @@
 **The port manager that knows your projects.** Stop killing your databases by mistake.
 
 ![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)
-![License](https://img.shields.io/github/license/golive-ly/port-hero)
-![Release](https://img.shields.io/github/v/release/golive-ly/port-hero)
-![Stars](https://img.shields.io/github/stars/golive-ly/port-hero?style=social)
+![License](https://img.shields.io/github/license/SystemEndgame/port-hero)
+![Release](https://img.shields.io/github/v/release/SystemEndgame/port-hero)
+![Stars](https://img.shields.io/github/stars/SystemEndgame/port-hero?style=social)
 ![Platforms](https://img.shields.io/badge/macOS-Linux-Windows-important)
 
 > **What's running on port 3000?** Port Hero answers in one command — the process, its **project name**, its **git branch**, its **container**, its **causality chain** ("why is it running?") — then lets you **kill it gracefully** or **kill & restart it** from a beautiful terminal UI.
@@ -51,7 +51,7 @@ git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 ### Homebrew
 
 ```bash
-brew install golive-ly/tap/port-hero
+brew install SystemEndgame/tap/port-hero
 ```
 
 ### Curl (macOS & Linux)
@@ -63,13 +63,13 @@ curl -sL golive.ly/port | sh
 ### Go
 
 ```bash
-go install github.com/golive-ly/port-hero@latest
+go install github.com/SystemEndgame/port-hero@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/golive-ly/port-hero.git
+git clone https://github.com/SystemEndgame/port-hero.git
 cd port-hero
 make build          # binaries/port-hero
 make install        # installs to ~/bin or /usr/local/bin

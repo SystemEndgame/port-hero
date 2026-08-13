@@ -12,7 +12,7 @@ builds:
     main: .
     ldflags:
       - -s -w
-      - -X github.com/golive-ly/port-hero/internal/tui.Version={{.Version}}
+      - -X github.com/SystemEndgame/port-hero/internal/tui.Version={{.Version}}
       - -X main.version={{.Version}}
     env:
       - CGO_ENABLED=0
@@ -56,7 +56,7 @@ release:
 # Homebrew tap formula generation.
 brews:
   - name: port-hero
-    homepage: "https://github.com/golive-ly/port-hero"
+    homepage: "https://github.com/SystemEndgame/port-hero"
     description: "The local port manager you actually trust — inspect, trace and gracefully kill processes on a port."
     license: MIT
     test: |

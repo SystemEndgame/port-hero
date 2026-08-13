@@ -1,7 +1,7 @@
 # ⚓ PORT HERO — Makefile
 BINARY   := port-hero
 VERSION  ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
-LDFLAGS  := -s -w -X github.com/golive-ly/port-hero/internal/tui.Version=$(VERSION) -X main.version=$(VERSION)
+LDFLAGS  := -s -w -X github.com/SystemEndgame/port-hero/internal/tui.Version=$(VERSION) -X main.version=$(VERSION)
 BUILD_DIR := binaries
 
 .PHONY: all build test vet fmt lint release clean install uninstall

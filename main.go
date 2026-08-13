@@ -29,15 +29,15 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/golive-ly/port-hero/internal/ancestry"
-	"github.com/golive-ly/port-hero/internal/cli"
-	"github.com/golive-ly/port-hero/internal/completion"
-	"github.com/golive-ly/port-hero/internal/guardrails"
-	"github.com/golive-ly/port-hero/internal/inspector"
-	"github.com/golive-ly/port-hero/internal/killer"
-	"github.com/golive-ly/port-hero/internal/locks"
-	"github.com/golive-ly/port-hero/internal/restart"
-	"github.com/golive-ly/port-hero/internal/tui"
+	"github.com/SystemEndgame/port-hero/internal/ancestry"
+	"github.com/SystemEndgame/port-hero/internal/cli"
+	"github.com/SystemEndgame/port-hero/internal/completion"
+	"github.com/SystemEndgame/port-hero/internal/guardrails"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/killer"
+	"github.com/SystemEndgame/port-hero/internal/locks"
+	"github.com/SystemEndgame/port-hero/internal/restart"
+	"github.com/SystemEndgame/port-hero/internal/tui"
 )
 
 var version = "dev"

@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/golive-ly/port-hero/internal/ancestry"
-	"github.com/golive-ly/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/ancestry"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
 // View implements tea.Model.

@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 # ⚓ PORT HERO — auditable install script
-#   curl -sL https://raw.githubusercontent.com/golive-ly/port-hero/main/install.sh | sh
+#   curl -sL https://raw.githubusercontent.com/SystemEndgame/port-hero/main/install.sh | sh
 #
 # Downloads the prebuilt binary for your OS/arch into ~/.local/bin.
 set -eu
 
-REPO="golive-ly/port-hero"
+REPO="SystemEndgame/port-hero"
 VERSION="${PORT_HERO_VERSION:-latest}"
 DEST="${PORT_HERO_INSTALL_DIR:-$HOME/.local/bin}"
 

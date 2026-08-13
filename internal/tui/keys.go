@@ -3,7 +3,7 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/golive-ly/port-hero/internal/guardrails"
+	"github.com/SystemEndgame/port-hero/internal/guardrails"
 )
 
 // ---------------------------------------------------------------------------

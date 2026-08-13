@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/golive-ly/port-hero/internal/inspector"
+	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
 // Node is one link in the causal chain.
