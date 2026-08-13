@@ -11,4 +11,5 @@
 # Go
 *.test
 *.out
-/demo/
+/demo/*
+!/demo/port-hero-demo.gif

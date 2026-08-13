@@ -22,7 +22,13 @@ lsof alternative, lsof port 3000, free port, kill port process, mac port manager
 git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 -->
 
----
+<div align="center">
+
+![Port Hero demo — project-aware port manager with causality tracing, graceful kill & restart](demo/port-hero-demo.gif)
+
+</div>
+
+------
 
 ## ✨ Features
 
