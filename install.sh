@@ -45,9 +45,17 @@ chmod +x "$TMP/port-hero"
 mkdir -p "$DEST"
 mv "$TMP/port-hero" "$DEST/port-hero"
 
+# Create a `port` alias (the docs use `port`), unless a conflicting
+# binary already exists (e.g. MacPorts).
+if ! command -v port >/dev/null 2>&1 || [ "$(command -v port)" = "$DEST/port-hero" ]; then
+  ln -sf "$DEST/port-hero" "$DEST/port"
+fi
+
 echo
 echo "✔ Installed to $DEST/port-hero"
+echo "   available as: port-hero  and  port"
 echo
-echo "Run:  port 3000"
+echo "Run:  port 3000     (or: port-hero 3000)"
 echo "Path: add '$DEST' to your PATH if not already there."
+echo "      (zsh: echo 'export PATH="\$HOME/.local/bin:\$PATH"' >> ~/.zshrc)"
 echo "Built with ❤ by GoLive — golive.ly"
