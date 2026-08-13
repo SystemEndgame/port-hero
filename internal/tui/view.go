@@ -39,7 +39,11 @@ func (m Model) View() string {
 	out += body
 	out += "\n\n" + footerStyle.Render("Built with ❤ by GoLive — free, zero-knowledge dev tools at golive.ly")
 
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(out)
+	width := m.width
+	if width <= 0 {
+		width = 80 // default before a WindowSizeMsg arrives (e.g. VHS, tmux)
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(out)
 }
 
 // ---------------------------------------------------------------------------

@@ -11,3 +11,4 @@
 # Go
 *.test
 *.out
+/demo/

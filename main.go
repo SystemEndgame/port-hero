@@ -43,18 +43,19 @@ import (
 var version = "dev"
 
 type options struct {
-	port       int
-	name       string
-	pid        int
-	file       string
-	kill       bool
-	force      bool
-	restart    bool
-	why        bool
-	json       bool
-	completion string
-	version    bool
-	help       bool
+	port        int
+	name        string
+	pid         int
+	file        string
+	kill        bool
+	force       bool
+	restart     bool
+	why         bool
+	json        bool
+	completion  string
+	noAltScreen bool
+	version     bool
+	help        bool
 }
 
 func main() {
@@ -102,7 +103,14 @@ func main() {
 	}
 
 	// Interactive TUI.
-	p := tea.NewProgram(tui.New(opts.port, opts.name), tea.WithAltScreen())
+	m := tui.New(opts.port, opts.name)
+	var p *tea.Program
+	if opts.noAltScreen {
+		// Inline rendering — no alternate screen buffer (VHS, scripts).
+		p = tea.NewProgram(m)
+	} else {
+		p = tea.NewProgram(m, tea.WithAltScreen())
+	}
 	if _, err := p.Run(); err != nil {
 		fatalExit(err, cli.ExitInternal)
 	}
@@ -140,7 +148,7 @@ func parseArgs(args []string) (options, error) {
 func isBoolFlag(a string) bool {
 	switch a {
 	case "--kill", "-k", "--force", "-F", "--restart", "-r", "--why",
-		"--json", "-j", "--version", "-v", "--help", "-h":
+		"--json", "-j", "--no-altscreen", "--version", "-v", "--help", "-h":
 		return true
 	}
 	return false
@@ -158,6 +166,8 @@ func setBoolFlag(o *options, a string) {
 		o.why = true
 	case "--json", "-j":
 		o.json = true
+	case "--no-altscreen":
+		o.noAltScreen = true
 	case "--version", "-v":
 		o.version = true
 	case "--help", "-h":
