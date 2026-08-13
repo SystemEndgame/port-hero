@@ -30,7 +30,7 @@ func (m Model) View() string {
 		body = m.renderError()
 	}
 
-	title := titleStyle.Render("⚓ PORT HERO ") + dim.Render("v"+Version)
+	title := titleStyle.Render("⚓ PORT HERO ") + dim.Render(Version)
 	sub := subtitleStyle.Render("Local port manager — inspect, kill & restart safely")
 
 	var out string

@@ -57,7 +57,7 @@ brew install SystemEndgame/tap/port-hero
 ### Curl (macOS & Linux)
 
 ```bash
-curl -sL golive.ly/port | sh
+curl -sL https://raw.githubusercontent.com/SystemEndgame/port-hero/main/install.sh | sh
 ```
 
 ### Go
@@ -136,7 +136,7 @@ launchd (pid 1)
 ### Example
 
 ```
-⚓ PORT HERO v1.0.0 — Local Port Manager
+⚓ PORT HERO v0.1.0 — Local Port Manager
 
   🔍 Port 3000 is occupied by:
 

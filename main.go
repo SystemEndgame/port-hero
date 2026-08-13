@@ -67,7 +67,7 @@ func main() {
 		return
 	}
 	if opts.version {
-		fmt.Printf("port-hero v%s\n", version)
+		fmt.Printf("port-hero %s\n", version)
 		return
 	}
 	if opts.completion != "" {
