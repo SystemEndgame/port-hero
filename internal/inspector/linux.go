@@ -66,7 +66,8 @@ func platformFindByPort(port int) ([]*Process, error) {
 	return procs, nil
 }
 
-// platformFindAll returns every TCP LISTEN process.
+// platformFindAll returns every TCP LISTEN process. CPU usage is computed in
+// a single two-sample sweep so N listeners cost one 250 ms window, not N.
 func platformFindAll() ([]*Process, error) {
 	lines, err := procNetListeners()
 	if err != nil {
@@ -85,7 +86,7 @@ func platformFindAll() ([]*Process, error) {
 			continue
 		}
 		seen[pid] = true
-		p, err := platformGetProcess(pid)
+		p, err := platformGetProcessNoCPU(pid)
 		if err != nil {
 			continue
 		}
@@ -94,11 +95,23 @@ func platformFindAll() ([]*Process, error) {
 		p.LocalAddr = l.addr
 		procs = append(procs, p)
 	}
+	platformBatchCPU(procs)
 	return procs, nil
 }
 
-// platformGetProcess reads full info from /proc.
+// platformGetProcess reads full info from /proc, including a live CPU sample.
 func platformGetProcess(pid int) (*Process, error) {
+	return platformGetProcessOpt(pid, true)
+}
+
+// platformGetProcessNoCPU reads full info from /proc without the blocking
+// CPU sample. Use it in bulk paths (lists, ancestry) where CPU is optional.
+func platformGetProcessNoCPU(pid int) (*Process, error) {
+	return platformGetProcessOpt(pid, false)
+}
+
+// platformGetProcessOpt is the shared implementation.
+func platformGetProcessOpt(pid int, withCPU bool) (*Process, error) {
 	if pid <= 0 {
 		return nil, errors.New("invalid pid")
 	}
@@ -109,11 +122,14 @@ func platformGetProcess(pid int) (*Process, error) {
 
 	p := &Process{PID: pid, Protocol: "tcp"}
 	p.PPID, p.Name = procStatBasic(statPath)
+	p.StartTime = procStartTime(statPath)
 	p.Argv = procCmdlineArgs(pid)
 	p.Command = strings.Join(p.Argv, " ")
 	p.User = procUser(pid)
 	p.MemoryMB, _ = procRSSMB(pid)
-	p.CPUPercent = procCPUPercent(pid)
+	if withCPU {
+		p.CPUPercent = procCPUPercent(pid)
+	}
 
 	if p.Name == "" && p.Command == "" {
 		return nil, fmt.Errorf("process %d has no readable metadata", pid)
@@ -226,18 +242,11 @@ func parseProcNet(path string) ([]procNetLine, error) {
 // a human-readable address.
 func decodeProcIP(hex, path string) string {
 	if strings.HasSuffix(path, "tcp6") {
-		// 32 hex chars, groups of 4, reversed, separated by ":".
-		trimmed := strings.TrimLeft(hex, "0")
-		if len(hex) == 32 && trimmed != "" {
-			var groups []string
-			for i := 24; i >= 0; i -= 4 {
-				groups = append(groups, hex[i:i+4])
-			}
-			return "[" + strings.Join(groups, ":") + "]"
+		if len(hex) == 32 {
+			return decodeIPv6(hex)
 		}
-		if trimmed == "" {
-			return "[::]"
-		}
+		// Anything shorter (or zero) is the unspecified address.
+		return "[::]"
 	}
 	// IPv4: 8 hex chars, little-endian.
 	b := make([]byte, 4)
@@ -246,6 +255,36 @@ func decodeProcIP(hex, path string) string {
 		b[3-i] = byte(v)
 	}
 	return fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
+}
+
+// decodeIPv6 converts the /proc/net/tcp6 hex representation — four 32-bit
+// words, each stored little-endian — back into network order and renders a
+// human-readable address. IPv4-mapped addresses (::ffff:a.b.c.d) are shown
+// in dotted-quad form for readability.
+func decodeIPv6(hex string) string {
+	b := make([]byte, 16)
+	for w := 0; w < 4; w++ {
+		word := hex[w*8 : w*8+8]
+		for j := 0; j < 4; j++ {
+			v, err := strconv.ParseUint(word[j*2:j*2+2], 16, 8)
+			if err != nil {
+				return "[::]"
+			}
+			// The j-th string byte is the (3-j)-th network-order byte.
+			b[w*4+(3-j)] = byte(v)
+		}
+	}
+	// IPv4-mapped: ::ffff:a.b.c.d
+	if b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 &&
+		b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0 &&
+		b[8] == 0 && b[9] == 0 && b[10] == 0xff && b[11] == 0xff {
+		return fmt.Sprintf("%d.%d.%d.%d", b[12], b[13], b[14], b[15])
+	}
+	segs := make([]string, 8)
+	for i := 0; i < 8; i++ {
+		segs[i] = fmt.Sprintf("%x", (uint16(b[i*2])<<8)|uint16(b[i*2+1]))
+	}
+	return "[" + strings.Join(segs, ":") + "]"
 }
 
 // inodeToPIDs maps socket inodes to owning PIDs by scanning /proc/*/fd.
@@ -307,6 +346,31 @@ func procStatBasic(path string) (ppid int, name string) {
 	return ppid, name
 }
 
+// procStartTime returns the process start time (proc(5) field 22, jiffies
+// since boot). It is used to detect PID reuse: two processes sharing a PID
+// always have different start times.
+func procStartTime(path string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	s := string(data)
+	close := strings.LastIndex(s, ")")
+	if close < 0 {
+		return 0
+	}
+	rest := strings.Fields(s[close+1:])
+	// rest[0]=state, rest[1]=ppid, ... rest[19]=starttime (field 22).
+	if len(rest) < 20 {
+		return 0
+	}
+	v, err := strconv.ParseUint(rest[19], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 // procCmdlineArgs reads the exact argv, NUL-separated.
 func procCmdlineArgs(pid int) []string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
@@ -356,6 +420,8 @@ func procRSSMB(pid int) (float64, error) {
 }
 
 // procCPUPercent computes a live CPU % using a two-sample delta over 250ms.
+// Use it only for single processes (detail views); bulk paths should call
+// platformBatchCPU instead so N processes share one sampling window.
 func procCPUPercent(pid int) float64 {
 	t1, s1 := procTicks(pid)
 	if t1 <= 0 {
@@ -378,8 +444,50 @@ func procCPUPercent(pid int) float64 {
 	return pct
 }
 
-// procTicks returns (systemTotalTicks, processTicks).
-func procTicks(pid int) (int64, int64) {
+// platformBatchCPU fills CPUPercent for every process in procs using one
+// sampling window. This turns O(N) serial 250ms sleeps into one 250ms sleep.
+func platformBatchCPU(procs []*Process) {
+	if len(procs) == 0 {
+		return
+	}
+	first := make(map[int]int64, len(procs))
+	for _, p := range procs {
+		if p == nil {
+			continue
+		}
+		if _, t := procTicks(p.PID); t > 0 {
+			first[p.PID] = t
+		}
+	}
+	total1 := cpuTotalTicks()
+	time.Sleep(250 * time.Millisecond)
+	total2 := cpuTotalTicks()
+	totalDelta := total2 - total1
+	if totalDelta <= 0 {
+		return
+	}
+	for _, p := range procs {
+		if p == nil {
+			continue
+		}
+		f, ok := first[p.PID]
+		if !ok {
+			continue
+		}
+		_, t := procTicks(p.PID)
+		if t <= f {
+			continue
+		}
+		pct := (float64(t-f) / float64(totalDelta)) * float64(runtime.NumCPU()) * 100
+		if pct > 100 {
+			pct = 100
+		}
+		p.CPUPercent = pct
+	}
+}
+
+// cpuTotalTicks returns the system-wide CPU ticks from /proc/stat.
+func cpuTotalTicks() int64 {
 	total := int64(0)
 	if data, err := os.ReadFile("/proc/stat"); err == nil {
 		first := strings.SplitN(string(data), "\n", 2)[0]
@@ -390,6 +498,12 @@ func procTicks(pid int) (int64, int64) {
 			}
 		}
 	}
+	return total
+}
+
+// procTicks returns (systemTotalTicks, processTicks).
+func procTicks(pid int) (int64, int64) {
+	total := cpuTotalTicks()
 	proc := int64(0)
 	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
 		s := string(data)

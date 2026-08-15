@@ -3,6 +3,7 @@ package guardrails
 import (
 	"testing"
 
+	"github.com/SystemEndgame/port-hero/internal/config"
 	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
@@ -89,5 +90,64 @@ func TestIsKernelThread(t *testing.T) {
 	}
 	if IsKernelThread("node") {
 		t.Error("node is not a kernel thread")
+	}
+}
+
+func TestConfigureWhitelistPort(t *testing.T) {
+	Configure(&config.Config{Whitelist: config.Whitelist{Ports: []int{5432}}})
+	defer Configure(nil)
+
+	active, _ := Check(proc(1234, "postgres", currentUser(), 5432), false)
+	for _, v := range active {
+		if v.Code == "PROTECTED_PORT" {
+			t.Error("whitelisted port 5432 must not raise PROTECTED_PORT")
+		}
+	}
+
+	// A protected port that is NOT whitelisted must still warn.
+	active, _ = Check(proc(1234, "postgres", currentUser(), 3306), false)
+	found := false
+	for _, v := range active {
+		if v.Code == "PROTECTED_PORT" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("non-whitelisted protected port must still raise PROTECTED_PORT")
+	}
+}
+
+func TestConfigureWhitelistProcess(t *testing.T) {
+	Configure(&config.Config{Whitelist: config.Whitelist{Processes: []string{"myworker"}}})
+	defer Configure(nil)
+
+	// Low PID warning suppressed for whitelisted process name.
+	active, _ := Check(proc(7, "myworker", currentUser(), 3000), false)
+	for _, v := range active {
+		if v.Code == "LOW_PID" {
+			t.Error("whitelisted process must not raise LOW_PID")
+		}
+	}
+
+	// Non-whitelisted low PID still warns.
+	active, _ = Check(proc(7, "node", currentUser(), 3000), false)
+	found := false
+	for _, v := range active {
+		if v.Code == "LOW_PID" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("non-whitelisted low PID must still raise LOW_PID")
+	}
+}
+
+func TestConfigureExtraProtectedDaemon(t *testing.T) {
+	Configure(&config.Config{Protection: config.Protection{Daemons: []string{"mycriticald"}}})
+	defer Configure(nil)
+
+	active, _ := Check(proc(1234, "mycriticald", "root", 3000), true)
+	if !HasCritical(active) {
+		t.Error("user-configured protected daemon must be critical even with --force")
 	}
 }

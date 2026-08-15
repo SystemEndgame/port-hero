@@ -49,13 +49,16 @@ changelog:
 
 release:
   github:
-    owner: golive-ly
+    owner: SystemEndgame
     name: port-hero
   draft: true
 
 # Homebrew tap formula generation.
 brews:
   - name: port-hero
+    tap:
+      owner: SystemEndgame
+      name: homebrew-tap
     homepage: "https://github.com/SystemEndgame/port-hero"
     description: "The local port manager you actually trust — inspect, trace and gracefully kill processes on a port."
     license: MIT

@@ -6,8 +6,20 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
+	"github.com/SystemEndgame/port-hero/internal/config"
 	"github.com/SystemEndgame/port-hero/internal/inspector"
+)
+
+// cfgMu guards the runtime-configurable protection tables.
+var cfgMu sync.RWMutex
+
+// whitelistPorts and whitelistProcesses suppress warning-level violations.
+// Critical protections can never be bypassed by the whitelist.
+var (
+	whitelistPorts     = map[int]bool{}
+	whitelistProcesses = map[string]bool{}
 )
 
 // Severity levels for violations.
@@ -175,6 +187,54 @@ func IsKernelThread(name string) bool {
 	return strings.HasPrefix(name, "[") && strings.HasSuffix(name, "]")
 }
 
+// Configure extends the Safety Shield tables from user configuration.
+// Extra protected ports/daemons are merged into the critical tables (they can
+// never be bypassed, matching the spirit of the built-in protections).
+// Whitelist entries only suppress warning-level violations (protected port,
+// low PID) — critical rules always stay active.
+//
+// It is safe to call multiple times; each call replaces the previous
+// whitelist and merges protection entries.
+func Configure(cfg *config.Config) {
+	cfgMu.Lock()
+	defer cfgMu.Unlock()
+	if cfg == nil {
+		whitelistPorts = map[int]bool{}
+		whitelistProcesses = map[string]bool{}
+		return
+	}
+	for port, reason := range cfg.Protection.Ports {
+		protectedPorts[port] = reason
+	}
+	for _, name := range cfg.Protection.Daemons {
+		if name != "" {
+			protectedProcessNames[name] = "user-configured protected process"
+		}
+	}
+	whitelistPorts = make(map[int]bool, len(cfg.Whitelist.Ports))
+	for _, p := range cfg.Whitelist.Ports {
+		whitelistPorts[p] = true
+	}
+	whitelistProcesses = make(map[string]bool, len(cfg.Whitelist.Processes))
+	for _, name := range cfg.Whitelist.Processes {
+		whitelistProcesses[name] = true
+	}
+}
+
+// IsWhitelistedPort reports whether the port was whitelisted by the user.
+func IsWhitelistedPort(port int) bool {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return whitelistPorts[port]
+}
+
+// IsWhitelistedProcess reports whether the process name was whitelisted.
+func IsWhitelistedProcess(name string) bool {
+	cfgMu.RLock()
+	defer cfgMu.RUnlock()
+	return whitelistProcesses[name]
+}
+
 // Check evaluates every safety rule for killing the given process.
 //
 //   - force  bypasses "warning" level violations (protected ports, low PIDs).
@@ -246,24 +306,7 @@ func Check(p *inspector.Process, force bool) (active, bypassed []Violation) {
 	}
 
 	// ---- WARNING (bypassable with --force) ----
-
-	var warn []Violation
-
-	if p.PID > 0 && p.PID < minPID {
-		warn = append(warn, Violation{
-			Severity: SeverityWarning,
-			Code:     "LOW_PID",
-			Message:  fmt.Sprintf("PID %d is very low — this may be a system process.", p.PID),
-		})
-	}
-
-	if reason, ok := IsProtectedPort(p.Port); ok {
-		warn = append(warn, Violation{
-			Severity: SeverityWarning,
-			Code:     "PROTECTED_PORT",
-			Message:  fmt.Sprintf("Port %d (%s) is a well-known system service port.", p.Port, reason),
-		})
-	}
+	warn := warningViolations(p)
 
 	if force {
 		bypassed = append(bypassed, warn...)
@@ -272,6 +315,30 @@ func Check(p *inspector.Process, force bool) (active, bypassed []Violation) {
 	}
 
 	return active, bypassed
+}
+
+// warningViolations collects the bypassable warning-level violations for a
+// process, honouring user whitelists.
+func warningViolations(p *inspector.Process) []Violation {
+	var warn []Violation
+
+	if p.PID > 0 && p.PID < minPID && !IsWhitelistedProcess(p.Name) {
+		warn = append(warn, Violation{
+			Severity: SeverityWarning,
+			Code:     "LOW_PID",
+			Message:  fmt.Sprintf("PID %d is very low — this may be a system process.", p.PID),
+		})
+	}
+
+	if reason, ok := IsProtectedPort(p.Port); ok && !IsWhitelistedPort(p.Port) {
+		warn = append(warn, Violation{
+			Severity: SeverityWarning,
+			Code:     "PROTECTED_PORT",
+			Message:  fmt.Sprintf("Port %d (%s) is a well-known system service port.", p.Port, reason),
+		})
+	}
+
+	return warn
 }
 
 // HasCritical reports whether any active violation is critical.

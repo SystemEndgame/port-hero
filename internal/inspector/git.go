@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/SystemEndgame/port-hero/internal/cache"
 )
 
 // gitInfo resolves the current branch and dirty state for a working
@@ -101,20 +102,17 @@ func ProjectName(cwd string) string {
 	return cwd
 }
 
-var (
-	dirtyCacheMu sync.Mutex
-	dirtyCache   = map[string]bool{}
-)
+// dirtyCache caches `git status --porcelain` results per repository so list
+// views stay fast. Entries expire after 30 s so freshly-edited working trees
+// are picked up on the next refresh.
+var dirtyCache = cache.New[bool](30 * time.Second)
 
 // gitDirtyCached runs `git status --porcelain` with a timeout and caches
 // the result per repository so list views stay fast.
 func gitDirtyCached(cwd, gitDir string) bool {
-	dirtyCacheMu.Lock()
-	if v, ok := dirtyCache[gitDir]; ok {
-		dirtyCacheMu.Unlock()
+	if v, ok := dirtyCache.Get(gitDir); ok {
 		return v
 	}
-	dirtyCacheMu.Unlock()
 
 	dirty := false
 	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
@@ -126,8 +124,6 @@ func gitDirtyCached(cwd, gitDir string) bool {
 		dirty = len(out) > 0
 	}
 
-	dirtyCacheMu.Lock()
-	dirtyCache[gitDir] = dirty
-	dirtyCacheMu.Unlock()
+	dirtyCache.Set(gitDir, dirty)
 	return dirty
 }

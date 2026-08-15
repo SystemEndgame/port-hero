@@ -96,3 +96,42 @@ func TestKillBlockedSelf(t *testing.T) {
 		t.Fatal("expected guardrail block for self-kill even with force")
 	}
 }
+
+func TestReverifyOK(t *testing.T) {
+	cmd := spawn(t, "sleep", "30")
+	p := &inspector.Process{PID: cmd.Process.Pid, Name: "sleep", User: me(), Port: 0}
+	if err := reverify(p); err != nil {
+		t.Fatalf("reverify failed for live own process: %v", err)
+	}
+}
+
+func TestReverifyGoneProcess(t *testing.T) {
+	// A PID that no longer exists must be rejected by reverify.
+	p := &inspector.Process{PID: 999999999, Name: "ghost", User: me(), Port: 0}
+	if err := reverify(p); err == nil {
+		t.Fatal("expected reverify to reject a non-existent process")
+	}
+}
+
+func TestReverifyOwnerChange(t *testing.T) {
+	cmd := spawn(t, "sleep", "30")
+	p := &inspector.Process{PID: cmd.Process.Pid, Name: "sleep", User: "someone-else", Port: 0}
+	if err := reverify(p); err == nil {
+		t.Fatal("expected reverify to reject an owner change")
+	}
+}
+
+func TestKillDryRunDoesNotSignal(t *testing.T) {
+	cmd := spawn(t, "sleep", "30")
+	p := &inspector.Process{PID: cmd.Process.Pid, Name: "sleep", User: me(), Port: 0}
+	res, err := Kill(p, Options{Tree: true, DryRun: true})
+	if err != nil {
+		t.Fatalf("Kill(dry-run): %v", err)
+	}
+	if !res.Graceful || !res.AllGone {
+		t.Errorf("dry run should report graceful+allgone: %v", res.Summary())
+	}
+	if !inspector.IsAlive(cmd.Process.Pid) {
+		t.Fatal("dry run must not terminate the process")
+	}
+}

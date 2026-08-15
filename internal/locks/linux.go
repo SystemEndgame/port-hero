@@ -25,7 +25,13 @@ type linuxLockRow struct {
 }
 
 func parseProcLocks() ([]linuxLockRow, error) {
-	f, err := os.Open("/proc/locks")
+	return parseProcLocksPath("/proc/locks")
+}
+
+// parseProcLocksPath parses a /proc/locks-format file (the real one on the
+// system, or a synthetic one under fuzz testing).
+func parseProcLocksPath(path string) ([]linuxLockRow, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}

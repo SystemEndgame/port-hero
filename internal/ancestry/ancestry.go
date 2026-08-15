@@ -71,6 +71,7 @@ func Build(pid int) (*Chain, error) {
 	}
 
 	// Fetch enriched info for up to the first 24 ancestors (bounded).
+	// GetProcessNoCPU avoids per-ancestor 250 ms CPU samples on Linux.
 	limit := len(ids)
 	if limit > 24 {
 		limit = 24
@@ -81,7 +82,7 @@ func Build(pid int) (*Chain, error) {
 			node.PPID = p.PPID
 			node.Name = p.Name
 		}
-		if full, err := inspector.GetProcess(id); err == nil {
+		if full, err := inspector.GetProcessNoCPU(id); err == nil {
 			node.Command = full.Command
 			node.User = full.User
 			if node.Name == "" {
@@ -189,4 +190,50 @@ func buildWarnings(c *Chain) []string {
 		w = append(w, "could not determine how this process was started")
 	}
 	return w
+}
+
+// AutoRestart reports whether a process is managed by a supervisor that is
+// likely to respawn it after it is killed: a launchd label on macOS, a
+// systemd unit on Linux, or an ancestor that is itself launchd/systemd.
+//
+// It is deliberately conservative (best effort, never blocks) — a false
+// positive just means an extra warning before a kill.
+func AutoRestart(pid int) (managed bool, manager, detail string) {
+	procs, err := inspector.AllProcesses()
+	if err != nil {
+		return false, "", ""
+	}
+	byPID := map[int]*inspector.Process{}
+	for _, p := range procs {
+		if p != nil && p.PID > 0 {
+			byPID[p.PID] = p
+		}
+	}
+
+	// The strongest signal: the target itself is a managed service.
+	if unit := detectService(pid); unit != "" {
+		// On Linux the service unit path implies systemd management; on
+		// macOS a launchd label implies KeepAlive may be set.
+		return true, platformManagerName(), unit
+	}
+
+	// Weaker signal: a launchd/systemd ancestor in the parent chain.
+	seen := map[int]bool{}
+	for cur := pid; cur > 0 && !seen[cur]; cur = parentOf(byPID, cur) {
+		seen[cur] = true
+		if p, ok := byPID[cur]; ok {
+			if label, isSuper := supervisorTable[p.Name]; isSuper {
+				switch label {
+				case "launchd":
+					return true, "launchd", "ancestor launchd may keep the process alive"
+				case "systemd":
+					return true, "systemd", "ancestor systemd may restart the unit"
+				}
+			}
+		}
+		if cur == 1 {
+			break
+		}
+	}
+	return false, "", ""
 }

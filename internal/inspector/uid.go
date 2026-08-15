@@ -5,28 +5,28 @@ package inspector
 import (
 	"os/user"
 	"strconv"
-	"sync"
+	"time"
+
+	"github.com/SystemEndgame/port-hero/internal/cache"
 )
 
-var (
-	uidCacheMu sync.Mutex
-	uidCache   = map[string]string{}
-)
+// uidCache resolves numeric UIDs to usernames. UID→name mappings are very
+// stable in practice, so a 10-minute TTL bounds memory without ever showing
+// stale owners for long.
+var uidCache = cache.New[string](10 * time.Minute)
 
 // lookupUID resolves a numeric UID to a username, caching results.
 // Returns ok=false when the lookup fails (e.g. inside a container without
 // /etc/passwd entries).
 func lookupUID(uid string) (string, bool) {
-	uidCacheMu.Lock()
-	defer uidCacheMu.Unlock()
-	if name, ok := uidCache[uid]; ok {
+	if name, ok := uidCache.Get(uid); ok {
 		return name, true
 	}
 	u, err := user.LookupId(uid)
 	if err != nil {
 		return "", false
 	}
-	uidCache[uid] = u.Username
+	uidCache.Set(uid, u.Username)
 	return u.Username, true
 }
 

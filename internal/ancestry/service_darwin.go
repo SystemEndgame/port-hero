@@ -6,27 +6,24 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/SystemEndgame/port-hero/internal/cache"
 )
 
-var (
-	launchdCacheMu sync.Mutex
-	launchdCache   = map[int]string{}
-)
+// launchdCache maps PIDs to launchd labels. The 30s TTL lets labels follow
+// short-lived processes while bounding memory.
+var launchdCache = cache.New[string](30 * time.Second)
 
 // detectService identifies the launchd label managing a PID, best effort.
 // Uses `launchctl procinfo <pid>` with a short timeout and caching.
 func detectService(pid int) string {
-	launchdCacheMu.Lock()
-	if label, ok := launchdCache[pid]; ok {
-		launchdCacheMu.Unlock()
-		return label
-	}
-	launchdCacheMu.Unlock()
-
 	if pid <= 1 {
 		return ""
+	}
+	key := strconv.Itoa(pid)
+	if label, ok := launchdCache.Get(key); ok {
+		return label
 	}
 	ctx, cancel := newTimeoutContext(700 * time.Millisecond)
 	defer cancel()
@@ -50,8 +47,9 @@ func detectService(pid int) string {
 		}
 	}
 
-	launchdCacheMu.Lock()
-	launchdCache[pid] = label
-	launchdCacheMu.Unlock()
+	launchdCache.Set(key, label)
 	return label
 }
+
+// platformManagerName returns the primary service manager name.
+func platformManagerName() string { return "launchd" }

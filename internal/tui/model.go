@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -89,8 +90,9 @@ type Model struct {
 
 	procs     []*inspector.Process
 	cursor    int
-	focusPort int    // when > 0, open directly on this port's detail view
-	filter    string // when non-empty, only show matching process names
+	focusPort int           // when > 0, open directly on this port's detail view
+	filter    string        // when non-empty, only show matching process names
+	grace     time.Duration // SIGTERM→SIGKILL grace period (from config)
 
 	focused     []*inspector.Process // processes on the focused port
 	focusCursor int
@@ -128,8 +130,9 @@ type resultState struct {
 
 // New creates the TUI model. If port > 0, the UI opens directly on that
 // port's detail view. If filter is non-empty, only processes whose name
-// matches are listed.
-func New(port int, filter string) Model {
+// matches are listed. grace is the SIGTERM→SIGKILL grace period (zero means
+// the killer's default).
+func New(port int, filter string, grace time.Duration) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipglossSpinnerStyle()
@@ -139,6 +142,7 @@ func New(port int, filter string) Model {
 		cursor:    0,
 		focusPort: port,
 		filter:    filter,
+		grace:     grace,
 		spinner:   s,
 	}
 	return m
@@ -276,32 +280,34 @@ func (m *Model) setWorking(action ActionType, p *inspector.Process) tea.Cmd {
 	var cmd tea.Cmd
 	switch action {
 	case ActionRestart:
-		cmd = executeRestart(p)
+		cmd = m.executeRestart(p)
 	case ActionForce:
-		cmd = executeKill(p, true)
+		cmd = m.executeKill(p, true)
 	default:
-		cmd = executeKill(p, false)
+		cmd = m.executeKill(p, false)
 	}
 	return cmd
 }
 
 // executeKill runs a tree-aware graceful/force kill in a goroutine.
-func executeKill(p *inspector.Process, force bool) tea.Cmd {
+func (m Model) executeKill(p *inspector.Process, force bool) tea.Cmd {
 	return func() tea.Msg {
 		res, err := killer.Kill(p, killer.Options{
-			Force: force,
-			Tree:  true,
+			Force:       force,
+			Tree:        true,
+			GracePeriod: m.grace,
 		})
 		return opDoneMsg{action: ActionGraceful, res: res, killErr: err, proc: p}
 	}
 }
 
 // executeRestart kills gracefully and respawns the command detached.
-func executeRestart(p *inspector.Process) tea.Cmd {
+func (m Model) executeRestart(p *inspector.Process) tea.Cmd {
 	return func() tea.Msg {
 		res, err := killer.Kill(p, killer.Options{
-			Force: false,
-			Tree:  true,
+			Force:       false,
+			Tree:        true,
+			GracePeriod: m.grace,
 		})
 		var rr restart.Result
 		if err == nil {

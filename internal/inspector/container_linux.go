@@ -9,14 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/SystemEndgame/port-hero/internal/cache"
 )
 
-var (
-	containerNameMu sync.Mutex
-	containerNames  = map[string]string{}
-)
+// containerNames resolves short container IDs to friendly names. The 30s TTL
+// lets freshly created containers appear quickly while bounding memory.
+var containerNames = cache.New[string](30 * time.Second)
 
 // containerInfo detects whether a PID runs inside a container and returns
 // a human label like "redis-dev (Docker)" or "abc123 (Docker)".
@@ -107,12 +107,9 @@ func containerName(id string) string {
 	if len(short) > 12 {
 		short = short[:12]
 	}
-	containerNameMu.Lock()
-	if n, ok := containerNames[short]; ok {
-		containerNameMu.Unlock()
+	if n, ok := containerNames.Get(short); ok {
 		return n
 	}
-	containerNameMu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
 	defer cancel()
@@ -123,8 +120,6 @@ func containerName(id string) string {
 		name = strings.Trim(strings.TrimSpace(string(out)), "/")
 	}
 
-	containerNameMu.Lock()
-	containerNames[short] = name
-	containerNameMu.Unlock()
+	containerNames.Set(short, name)
 	return name
 }

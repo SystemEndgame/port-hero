@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
-	"strings"
 	"testing"
 	"time"
 )
@@ -102,20 +101,51 @@ func TestTreeOrder(t *testing.T) {
 	}
 	s := NewSnapshot(procs)
 	order := s.TreeOrder(1)
-	want := []int{3, 2, 4, 1}
-	if strings.Join(intsToStrings(order), ",") != strings.Join(intsToStrings(want), ",") {
-		t.Errorf("TreeOrder(1) = %v, want %v", order, want)
+
+	// Sibling order is unspecified (map iteration); verify the invariants:
+	// every process appears exactly once, the root is last, and each child
+	// is signalled before its parent (post-order).
+	if len(order) != 4 {
+		t.Fatalf("TreeOrder(1) length = %d, want 4: %v", len(order), order)
 	}
+	if order[3] != 1 {
+		t.Errorf("root must be signalled last, got order=%v", order)
+	}
+	pos := map[int]int{}
+	for i, pid := range order {
+		if _, dup := pos[pid]; dup {
+			t.Fatalf("duplicate PID %d in order %v", pid, order)
+		}
+		pos[pid] = i
+	}
+	for _, p := range procs {
+		if p.PPID != 0 && pos[p.PID] > pos[p.PPID] {
+			t.Errorf("child %d signalled after parent %d in %v", p.PID, p.PPID, order)
+		}
+	}
+
 	desc := s.Descendants(1)
 	if len(desc) != 3 {
 		t.Errorf("Descendants(1) = %d, want 3", len(desc))
 	}
 }
 
-func intsToStrings(in []int) []string {
-	out := make([]string, len(in))
-	for i, v := range in {
-		out[i] = fmt.Sprint(v)
+func TestTreeOrderDeepChain(t *testing.T) {
+	// A linear chain of 10 must come out strictly child-first.
+	var procs []*Process
+	for i := 1; i <= 10; i++ {
+		ppid := i - 1
+		if i == 1 {
+			ppid = 0
+		}
+		procs = append(procs, &Process{PID: i, PPID: ppid, Name: fmt.Sprintf("p%d", i)})
 	}
-	return out
+	s := NewSnapshot(procs)
+	order := s.TreeOrder(1)
+	if len(order) != 10 {
+		t.Fatalf("TreeOrder length = %d, want 10", len(order))
+	}
+	if order[0] != 10 || order[len(order)-1] != 1 {
+		t.Errorf("deep chain order = %v, want [10..1]", order)
+	}
 }

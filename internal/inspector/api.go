@@ -40,7 +40,8 @@ func FindAll() ([]*Process, error) {
 	return procs, nil
 }
 
-// GetProcess returns full enriched information about a single PID.
+// GetProcess returns full enriched information about a single PID,
+// including a live CPU sample.
 func GetProcess(pid int) (*Process, error) {
 	p, err := platformGetProcess(pid)
 	if err != nil {
@@ -50,9 +51,31 @@ func GetProcess(pid int) (*Process, error) {
 	return p, nil
 }
 
+// GetProcessNoCPU returns full enriched information about a single PID
+// without blocking on a CPU sample. Use it in bulk/loop paths (causality
+// chains, name search) where per-PID CPU sampling would serialize 250 ms
+// sleeps.
+func GetProcessNoCPU(pid int) (*Process, error) {
+	p, err := platformGetProcessNoCPU(pid)
+	if err != nil {
+		return nil, err
+	}
+	Enrich(p)
+	return p, nil
+}
+
+// VerifyProcess returns the raw platform identity of a PID (name, user,
+// start time) without enrichment or CPU sampling. It is used by the killer
+// to re-confirm a process is still the same one before signalling, closing
+// the PID-reuse / owner-change race window.
+func VerifyProcess(pid int) (*Process, error) {
+	return platformGetProcessNoCPU(pid)
+}
+
 // FindByName returns processes whose name (comm) contains the given
 // substring, enriched, limited to maxMatches (0 = unlimited). Matching is
-// case-insensitive and against the short process name.
+// case-insensitive and against the short process name. CPU usage is sampled
+// once for the whole result set via platformBatchCPU.
 func FindByName(name string, maxMatches int) ([]*Process, error) {
 	if name == "" {
 		return nil, errors.New("name must not be empty")
@@ -67,7 +90,7 @@ func FindByName(name string, maxMatches int) ([]*Process, error) {
 		if !strings.Contains(strings.ToLower(p.Name), needle) {
 			continue
 		}
-		full, err := GetProcess(p.PID)
+		full, err := GetProcessNoCPU(p.PID)
 		if err != nil {
 			continue
 		}
@@ -76,6 +99,7 @@ func FindByName(name string, maxMatches int) ([]*Process, error) {
 			break
 		}
 	}
+	platformBatchCPU(out)
 	SortByPort(out)
 	return out, nil
 }

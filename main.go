@@ -9,11 +9,15 @@
 //	port node --why               causality for every matching process
 //	port --pid 1234 --why         causality for a specific PID
 //	port 3000 --kill              graceful kill (SIGTERM, tree-aware)
-//	port 3000 --force             force kill (SIGKILL after 1.5 s grace)
+//	port 3000 --force             force kill (SIGKILL after grace)
 //	port 3000 --restart           kill & restart the command detached
+//	port --pid 1234 --kill        kill a specific PID (no port needed)
+//	port 3000 --kill --all        kill every process on the port
+//	port 3000 --kill --dry-run    show what would happen, send nothing
 //	port --file /path/to/file     who holds a lock on this file?
 //	port --json                   machine-readable dump of all listeners
 //	port 3000 --json              machine-readable dump of one port
+//	port 3000 --kill --json       machine-readable kill result
 //	port --completion bash        print a shell completion script
 //	port --version                print version
 //
@@ -23,6 +27,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +37,7 @@ import (
 	"github.com/SystemEndgame/port-hero/internal/ancestry"
 	"github.com/SystemEndgame/port-hero/internal/cli"
 	"github.com/SystemEndgame/port-hero/internal/completion"
+	"github.com/SystemEndgame/port-hero/internal/config"
 	"github.com/SystemEndgame/port-hero/internal/guardrails"
 	"github.com/SystemEndgame/port-hero/internal/inspector"
 	"github.com/SystemEndgame/port-hero/internal/killer"
@@ -50,9 +56,13 @@ type options struct {
 	kill        bool
 	force       bool
 	restart     bool
+	all         bool
+	dryRun      bool
 	why         bool
 	json        bool
 	completion  string
+	logLevel    string
+	logFormat   string
 	noAltScreen bool
 	version     bool
 	help        bool
@@ -63,22 +73,12 @@ func main() {
 	if err != nil {
 		fatalExit(err, cli.ExitInvalid)
 	}
-	if opts.help {
-		printUsage()
+	if handleMetaFlags(&opts) {
 		return
 	}
-	if opts.version {
-		fmt.Printf("port-hero %s\n", version)
-		return
-	}
-	if opts.completion != "" {
-		script, err := completion.Script(opts.completion)
-		if err != nil {
-			fatalExit(err, cli.ExitInvalid)
-		}
-		fmt.Print(script)
-		return
-	}
+
+	// Load the optional ~/.port-hero/config.yaml, then apply CLI overrides.
+	cfg := loadConfig(&opts)
 
 	// File lock queries.
 	if opts.file != "" {
@@ -92,20 +92,66 @@ func main() {
 		return
 	}
 
+	// Kill / force / restart must be handled before the plain --json dump so
+	// that `port 3000 --kill --json` produces a kill result, not a listing.
+	if opts.kill || opts.force || opts.restart {
+		runAction(&opts, cfg)
+		return
+	}
+
 	if opts.json {
 		runJSON(&opts)
 		return
 	}
 
-	if opts.kill || opts.force || opts.restart {
-		runAction(&opts)
-		return
-	}
+	runTUI(&opts, cfg)
+}
 
-	// Interactive TUI.
-	m := tui.New(opts.port, opts.name)
+// handleMetaFlags handles the immediate-exit flags (--help, --version,
+// --completion). It reports whether the caller should return.
+func handleMetaFlags(o *options) bool {
+	if o.help {
+		printUsage()
+		return true
+	}
+	if o.version {
+		fmt.Printf("port-hero %s\n", version)
+		return true
+	}
+	if o.completion != "" {
+		script, err := completion.Script(o.completion)
+		if err != nil {
+			fatalExit(err, cli.ExitInvalid)
+		}
+		fmt.Print(script)
+		return true
+	}
+	return false
+}
+
+// loadConfig loads the user config file, applies CLI overrides, configures
+// structured logging and the Safety Shield.
+func loadConfig(o *options) *config.Config {
+	cfg, err := config.LoadFromHome()
+	if err != nil {
+		fatalExit(err, cli.ExitInvalid)
+	}
+	if o.logLevel != "" {
+		cfg.LogLevel = o.logLevel
+	}
+	if o.logFormat != "" {
+		cfg.LogFormat = o.logFormat
+	}
+	setupLogging(cfg.LogLevel, cfg.LogFormat)
+	guardrails.Configure(cfg)
+	return cfg
+}
+
+// runTUI starts the interactive Bubble Tea interface.
+func runTUI(o *options, cfg *config.Config) {
+	m := tui.New(o.port, o.name, cfg.GracePeriod)
 	var p *tea.Program
-	if opts.noAltScreen {
+	if o.noAltScreen {
 		// Inline rendering — no alternate screen buffer (VHS, scripts).
 		p = tea.NewProgram(m)
 	} else {
@@ -114,6 +160,30 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fatalExit(err, cli.ExitInternal)
 	}
+}
+
+// setupLogging configures the process-wide structured logger (stdlib slog).
+// JSON format is intended for CI pipelines and log aggregation.
+func setupLogging(level, format string) {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
+	var h slog.Handler
+	if format == "json" {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		h = slog.NewTextHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(h))
 }
 
 func parseArgs(args []string) (options, error) {
@@ -138,17 +208,47 @@ func parseArgs(args []string) (options, error) {
 			setPositional(&o, a)
 		}
 	}
-	if o.port > 0 && o.name != "" {
-		return o, fmt.Errorf("cannot combine a port (%d) and a process name (%q)", o.port, o.name)
+	if err := o.validate(); err != nil {
+		return o, err
 	}
 	return o, nil
+}
+
+// validate checks cross-flag constraints. It is separate so parseArgs stays
+// a simple loop and the rules are easy to test.
+func (o *options) validate() error {
+	if o.port > 0 && o.name != "" {
+		return fmt.Errorf("cannot combine a port (%d) and a process name (%q)", o.port, o.name)
+	}
+	if o.all && !o.kill && !o.force && !o.restart {
+		return fmt.Errorf("--all requires --kill, --force or --restart")
+	}
+	if o.dryRun && !o.kill && !o.force && !o.restart {
+		return fmt.Errorf("--dry-run requires --kill, --force or --restart")
+	}
+	if o.logLevel != "" {
+		switch o.logLevel {
+		case "debug", "info", "warn", "error":
+		default:
+			return fmt.Errorf("--log-level must be one of debug|info|warn|error")
+		}
+	}
+	if o.logFormat != "" {
+		switch o.logFormat {
+		case "text", "json":
+		default:
+			return fmt.Errorf("--log-format must be one of text|json")
+		}
+	}
+	return nil
 }
 
 // isBoolFlag reports whether a is a standalone boolean flag.
 func isBoolFlag(a string) bool {
 	switch a {
 	case "--kill", "-k", "--force", "-F", "--restart", "-r", "--why",
-		"--json", "-j", "--no-altscreen", "--version", "-v", "--help", "-h":
+		"--json", "-j", "--all", "--dry-run", "--no-altscreen",
+		"--version", "-v", "--help", "-h":
 		return true
 	}
 	return false
@@ -162,6 +262,10 @@ func setBoolFlag(o *options, a string) {
 		o.force, o.kill = true, true
 	case "--restart", "-r":
 		o.restart = true
+	case "--all":
+		o.all = true
+	case "--dry-run":
+		o.dryRun = true
 	case "--why":
 		o.why = true
 	case "--json", "-j":
@@ -177,7 +281,8 @@ func setBoolFlag(o *options, a string) {
 
 // isValueFlag reports whether a requires a following value argument.
 func isValueFlag(a string) bool {
-	return a == "--pid" || a == "--file" || a == "--completion"
+	return a == "--pid" || a == "--file" || a == "--completion" ||
+		a == "--log-level" || a == "--log-format"
 }
 
 // flagValue returns the value following a value flag.
@@ -200,6 +305,10 @@ func setValueFlag(o *options, a, val string) error {
 		o.file = val
 	case "--completion":
 		o.completion = val
+	case "--log-level":
+		o.logLevel = val
+	case "--log-format":
+		o.logFormat = val
 	}
 	return nil
 }
@@ -223,22 +332,34 @@ USAGE:
   port node --why          Trace causality for matching processes
   port --pid 1234 --why    Trace causality for a PID
   port 3000 --kill         Graceful kill (SIGTERM, whole process tree)
-  port 3000 --force        Force kill (SIGKILL after 1.5 s grace)
+  port 3000 --force        Force kill (SIGKILL after grace period)
   port 3000 --restart      Kill & restart the command detached
+  port --pid 1234 --kill   Kill a specific PID by number
+  port 3000 --kill --all   Kill every process listening on the port
+  port 3000 --kill --dry-run   Preview without sending any signal
   port --file /path        Show which process holds a lock on a file
   port --json              Machine-readable list of all listeners
   port 3000 --json         Machine-readable detail for one port
+  port 3000 --kill --json  Machine-readable kill result
   port --completion bash   Print shell completion (bash|zsh|fish)
+  port --log-level debug   Structured logging level (debug|info|warn|error)
+  port --log-format json   Structured log format (text|json)
   port --version           Print version
 
 EXIT CODES:
   0 ok · 1 warnings · 2 not found · 3 blocked by safety shield · 4 invalid · 5 error
+
+CONFIGURATION:
+  Optional file ~/.port-hero/config.yaml — grace_period, whitelist ports and
+  processes, extra protected ports/daemons, log level and format.
 
 SAFETY:
   The Safety Shield refuses to touch PID 1, kernel threads, system daemons
   (sshd, launchd, docker…), foreign users' processes, or protected system
   ports (22 SSH, 53 DNS, 80, 443…). Use --force only to bypass the
   warning-level protections — critical protections always stay active.
+  Before signalling, the target's identity (owner + start time) is
+  re-verified to prevent PID-reuse attacks.
 
 Built with ❤ by GoLive — free, zero-knowledge dev tools at golive.ly
 `)
@@ -428,82 +549,192 @@ func runJSON(o *options) {
 // Kill / force / restart.
 // ---------------------------------------------------------------------------
 
-func runAction(o *options) {
-	if o.port <= 0 {
-		fatalExit(fmt.Errorf("a port is required for --kill / --force / --restart (e.g. port 3000 --kill)"), cli.ExitInvalid)
+// runAction resolves the target process(es) and executes kill/force/restart.
+// It supports --pid targeting, --all for multi-process ports, --dry-run
+// previews and --json machine-readable output.
+func runAction(o *options, cfg *config.Config) {
+	procs, code := actionTargets(o)
+	if code != 0 {
+		os.Exit(code)
 	}
-	procs, err := inspector.FindByPort(o.port)
-	if err != nil {
-		if err == inspector.ErrPortFree {
-			fmt.Println("Nothing listening on port", o.port)
-			os.Exit(cli.ExitNotFound)
+	if len(procs) > 1 && !o.all {
+		fmt.Printf("⚠ Multiple processes are listening on port %d:\n", o.port)
+		for _, p := range procs {
+			fmt.Printf("   • %s (PID %d)\n", p.Name, p.PID)
 		}
-		fatalExit(err, cli.ExitInternal)
-	}
-	if len(procs) == 0 {
-		fmt.Println("Nothing listening on port", o.port)
-		os.Exit(cli.ExitNotFound)
-	}
-	p := procs[0]
-
-	if o.restart {
-		runRestart(p)
-		return
+		fmt.Println("Use --all to kill them all, or target one with: port --pid <PID> --kill")
+		os.Exit(cli.ExitInvalid)
 	}
 
-	// Guardrails first.
-	active, _ := guardrails.Check(p, o.force)
-	if guardrails.HasCritical(active) {
-		fmt.Println("⛔ BLOCKED by Safety Shield:")
-		for _, v := range active {
-			fmt.Println("   •", v)
-		}
-		os.Exit(cli.ExitBlocked)
-	}
+	var (
+		killResults []killer.Result
+		restarts    []restart.Result
+	)
 	warned := false
-	for _, v := range active {
-		warned = true
-		fmt.Println("⚠", v)
+
+	for _, p := range procs {
+		if o.restart {
+			rr := performRestartOne(p, o, cfg)
+			restarts = append(restarts, rr)
+			if rr.Error != nil {
+				warned = true
+			}
+			continue
+		}
+		res, w := performKillOne(p, o, cfg)
+		killResults = append(killResults, res)
+		if w {
+			warned = true
+		}
 	}
 
-	res, err := killer.Kill(p, killer.Options{Force: o.force, Tree: true})
-	if err != nil {
-		fmt.Println("⛔", err)
-		os.Exit(cli.ExitBlocked)
+	if o.json {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if o.restart {
+			if restarts == nil {
+				restarts = []restart.Result{}
+			}
+			_ = enc.Encode(restarts)
+		} else {
+			if killResults == nil {
+				killResults = []killer.Result{}
+			}
+			_ = enc.Encode(killResults)
+		}
 	}
-	fmt.Printf("✅ %s (in %s)\n", res.Summary(), inspector.FormatDuration(res.Elapsed))
-	if !res.AllGone {
-		os.Exit(cli.ExitWarnings)
-	}
+
 	if warned {
 		os.Exit(cli.ExitWarnings)
 	}
 	os.Exit(cli.ExitOK)
 }
 
-func runRestart(p *inspector.Process) {
-	active, _ := guardrails.Check(p, false)
+// performKillOne runs the Safety Shield and kill for a single process,
+// returning the result and whether warnings were emitted.
+func performKillOne(p *inspector.Process, o *options, cfg *config.Config) (res killer.Result, warned bool) {
+	_, warned = guardrailWarnings(p, o)
+
+	var err error
+	res, err = killer.Kill(p, killer.Options{
+		Force:       o.force,
+		Tree:        true,
+		GracePeriod: cfg.GracePeriod,
+		DryRun:      o.dryRun,
+	})
+	if err != nil {
+		fmt.Println("⛔", err)
+		os.Exit(cli.ExitBlocked)
+	}
+	for _, w := range res.Warnings {
+		warned = true
+		printWarn(o, w)
+	}
+	if !o.json {
+		fmt.Printf("✅ %s (in %s)\n", res.Summary(), inspector.FormatDuration(res.Elapsed))
+	}
+	if !res.AllGone {
+		warned = true
+	}
+	return res, warned
+}
+
+// performRestartOne runs the Safety Shield and restart for a single process.
+func performRestartOne(p *inspector.Process, o *options, cfg *config.Config) restart.Result {
+	guardrailWarnings(p, o)
+	return runRestartOnce(p, o, cfg)
+}
+
+// guardrailWarnings evaluates the Safety Shield for a kill target. Critical
+// violations block with exit 3; warning-level violations are printed and
+// reported via the returned flag.
+func guardrailWarnings(p *inspector.Process, o *options) (active []guardrails.Violation, warned bool) {
+	active, _ = guardrails.Check(p, o.force)
 	if guardrails.HasCritical(active) {
+		// Blocked output goes to stdout in text mode, stderr in JSON mode
+		// so the JSON stream stays clean (we exit before emitting it).
 		fmt.Println("⛔ BLOCKED by Safety Shield:")
 		for _, v := range active {
 			fmt.Println("   •", v)
 		}
 		os.Exit(cli.ExitBlocked)
 	}
-	res, err := killer.Kill(p, killer.Options{Tree: true})
+	for _, v := range active {
+		warned = true
+		printWarn(o, v.String())
+	}
+	return active, warned
+}
+
+// printWarn routes a warning to stderr in JSON mode so stdout stays clean.
+func printWarn(o *options, msg string) {
+	if o.json {
+		fmt.Fprintln(os.Stderr, "⚠", msg)
+	} else {
+		fmt.Println("⚠", msg)
+	}
+}
+
+// actionTargets resolves the process(es) targeted by a kill/force/restart.
+func actionTargets(o *options) (procs []*inspector.Process, code int) {
+	switch {
+	case o.pid > 0:
+		p, err := inspector.GetProcess(o.pid)
+		if err != nil {
+			fmt.Println("⛔ process not found:", err)
+			return nil, cli.ExitNotFound
+		}
+		return []*inspector.Process{p}, 0
+	case o.port > 0:
+		procs, err := inspector.FindByPort(o.port)
+		if err != nil {
+			if err == inspector.ErrPortFree {
+				fmt.Println("Nothing listening on port", o.port)
+				return nil, cli.ExitNotFound
+			}
+			fatalExit(err, cli.ExitInternal)
+		}
+		return procs, 0
+	default:
+		fmt.Println("⛔ a port or --pid is required for --kill / --force / --restart")
+		return nil, cli.ExitInvalid
+	}
+}
+
+// runRestartOnce kills a single process and respawns it detached.
+//
+// Identity safety in the restart flow: killer.Kill re-verifies the ORIGINAL
+// process (p.PID) before signalling it — the respawned process only comes
+// into existence afterwards via restart.Restart and receives a brand-new
+// PID, so reverify can never mistake the new process for the old one.
+func runRestartOnce(p *inspector.Process, o *options, cfg *config.Config) restart.Result {
+	res, err := killer.Kill(p, killer.Options{
+		Force:       o.force,
+		Tree:        true,
+		GracePeriod: cfg.GracePeriod,
+		DryRun:      o.dryRun,
+	})
 	if err != nil {
 		fmt.Println("⛔", err)
 		os.Exit(cli.ExitBlocked)
 	}
+	if o.dryRun {
+		return restart.Result{}
+	}
+
 	rr := restart.Restart(p, p.CWD)
 	if rr.Error != nil {
-		fmt.Println("⚠ killed:", res.Summary())
-		fmt.Println("⛔ restart failed:", rr.Error)
-		os.Exit(cli.ExitWarnings)
+		if !o.json {
+			fmt.Printf("⚠ killed: %s\n", res.Summary())
+			fmt.Println("⛔ restart failed:", rr.Error)
+		} else {
+			fmt.Fprintln(os.Stderr, "⛔ restart failed:", rr.Error)
+		}
+	} else if !o.json {
+		fmt.Printf("✅ %s in %s → respawned as PID %d (log: %s)\n",
+			res.Summary(), inspector.FormatDuration(res.Elapsed), rr.NewPID, rr.Log)
 	}
-	fmt.Printf("✅ %s in %s → respawned as PID %d (log: %s)\n",
-		res.Summary(), inspector.FormatDuration(res.Elapsed), rr.NewPID, rr.Log)
-	os.Exit(cli.ExitOK)
+	return rr
 }
 
 func fatalExit(err error, code int) {

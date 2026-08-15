@@ -97,6 +97,12 @@ func platformFindAll() ([]*Process, error) {
 
 // platformGetProcess resolves details via tasklist + PowerShell.
 func platformGetProcess(pid int) (*Process, error) {
+	return platformGetProcessNoCPU(pid)
+}
+
+// platformGetProcessNoCPU on Windows is identical to platformGetProcess:
+// there is no blocking CPU sample to skip (CPU usage is not collected).
+func platformGetProcessNoCPU(pid int) (*Process, error) {
 	if pid <= 0 {
 		return nil, errors.New("invalid pid")
 	}
@@ -123,6 +129,10 @@ func platformGetProcess(pid int) (*Process, error) {
 	}
 	return p, nil
 }
+
+// platformBatchCPU is a no-op on Windows: CPU percentages are not available
+// via tasklist.
+func platformBatchCPU(_ []*Process) {}
 
 // platformAllProcesses: PID/PPID via tasklist /v is too slow; use PowerShell
 // one-shot instead.

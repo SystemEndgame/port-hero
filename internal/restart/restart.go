@@ -13,11 +13,13 @@ import (
 	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
-// Result reports a restart outcome.
+// Result reports a restart outcome. It is JSON-serialisable for CI use;
+// Error is exposed as a string via ErrMsg.
 type Result struct {
-	NewPID int
-	Log    string // path to the captured log file
-	Error  error
+	NewPID int    `json:"new_pid,omitempty"`
+	Log    string `json:"log,omitempty"` // path to the captured log file
+	Error  error  `json:"-"`
+	ErrMsg string `json:"error,omitempty"`
 }
 
 // Restart respawns the command of p after it has been killed.
@@ -25,11 +27,11 @@ type Result struct {
 // Returns the new PID and the log file path.
 func Restart(p *inspector.Process, dir string) Result {
 	if p == nil {
-		return Result{Error: fmt.Errorf("no process to restart")}
+		return Result{Error: fmt.Errorf("no process to restart"), ErrMsg: "no process to restart"}
 	}
 	argv := p.CommandTokens()
 	if len(argv) == 0 {
-		return Result{Error: fmt.Errorf("command line could not be reconstructed")}
+		return Result{Error: fmt.Errorf("command line could not be reconstructed"), ErrMsg: "command line could not be reconstructed"}
 	}
 	if dir == "" {
 		dir = p.CWD
@@ -57,7 +59,8 @@ func Restart(p *inspector.Process, dir string) Result {
 	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
-		return Result{Log: logFile, Error: fmt.Errorf("restart failed: %w", err)}
+		msg := fmt.Sprintf("restart failed: %v", err)
+		return Result{Log: logFile, Error: fmt.Errorf("%s", msg), ErrMsg: msg}
 	}
 
 	// Capture the PID before detaching: Process.Release() clears Pid.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -117,6 +118,13 @@ func platformFindAll() ([]*Process, error) {
 
 // platformGetProcess returns enriched info about a single PID.
 func platformGetProcess(pid int) (*Process, error) {
+	return platformGetProcessNoCPU(pid)
+}
+
+// platformGetProcessNoCPU on darwin is the same as platformGetProcess:
+// CPU usage comes from a single batched ps call, so there is no per-process
+// blocking sample to skip.
+func platformGetProcessNoCPU(pid int) (*Process, error) {
 	if pid <= 0 {
 		return nil, errors.New("invalid pid")
 	}
@@ -140,6 +148,10 @@ func platformGetProcess(pid int) (*Process, error) {
 	}
 	return p, nil
 }
+
+// platformBatchCPU is a no-op on darwin: CPU percentages are already
+// populated by the batched ps invocation used in darwinPsStats.
+func platformBatchCPU(_ []*Process) {}
 
 // platformAllProcesses returns the lightweight PID/PPID/name snapshot.
 func platformAllProcesses() ([]*Process, error) {
@@ -337,17 +349,35 @@ func darwinPsStats(pids []int) (map[int]psStat, error) {
 		if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
 			continue
 		}
+		command := strings.Join(fields[6:], " ")
 		stats[pid] = psStat{
-			pid:     pid,
-			ppid:    ppid,
-			user:    fields[2],
-			rssMB:   rss / 1024.0, // ps reports KB on macOS
-			cpu:     cpu,
-			name:    fields[5],
-			command: strings.Join(fields[6:], " "),
+			pid:   pid,
+			ppid:  ppid,
+			user:  fields[2],
+			rssMB: rss / 1024.0, // ps reports KB on macOS
+			cpu:   cpu,
+			// macOS truncates the `comm` column to 16 chars in batch output,
+			// so derive the process name from the command's first token.
+			name:    darwinCommName(command, fields[5]),
+			command: command,
 		}
 	}
 	return stats, nil
+}
+
+// darwinCommName returns the short process name from the full command line,
+// falling back to the (possibly truncated) comm column. The basename of the
+// executable keeps names like "launchd", "WindowServer" and "node" intact.
+func darwinCommName(command, comm string) string {
+	if command != "" {
+		if tok := strings.Fields(command); len(tok) > 0 && tok[0] != "" {
+			base := filepath.Base(tok[0])
+			if base != "" && base != "." && base != "/" {
+				return base
+			}
+		}
+	}
+	return comm
 }
 
 // darwinCwds batch-reads working directories with one lsof invocation.
