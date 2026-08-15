@@ -239,7 +239,8 @@ func parseProcNet(path string) ([]procNetLine, error) {
 }
 
 // decodeProcIP converts the little-endian hex IP from /proc/net into
-// a human-readable address.
+// a human-readable address. Malformed values (shorter than expected) are
+// tolerated: tcp6 yields the unspecified address, IPv4 yields 0.0.0.0.
 func decodeProcIP(hex, path string) string {
 	if strings.HasSuffix(path, "tcp6") {
 		if len(hex) == 32 {
@@ -248,7 +249,10 @@ func decodeProcIP(hex, path string) string {
 		// Anything shorter (or zero) is the unspecified address.
 		return "[::]"
 	}
-	// IPv4: 8 hex chars, little-endian.
+	// IPv4: exactly 8 hex chars, little-endian.
+	if len(hex) != 8 {
+		return "0.0.0.0"
+	}
 	b := make([]byte, 4)
 	for i := 0; i < 4; i++ {
 		v, _ := strconv.ParseUint(hex[i*2:i*2+2], 16, 8)
