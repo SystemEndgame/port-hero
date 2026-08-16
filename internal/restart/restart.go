@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SystemEndgame/port-hero/internal/config"
 	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
@@ -30,6 +31,13 @@ func Restart(p *inspector.Process, dir string) Result {
 		return Result{Error: fmt.Errorf("no process to restart"), ErrMsg: "no process to restart"}
 	}
 	argv := p.CommandTokens()
+	// Prefer the repository's start command from .port-hero.yaml: it
+	// preserves package-manager context (npm run dev, go run, docker compose)
+	// and round-trips quotes on every platform, which argv reconstruction
+	// cannot.
+	if cfg, err := config.FindProjectConfig(dir); err == nil && cfg != nil && cfg.Start != "" {
+		argv = shellCommand(cfg.Start)
+	}
 	if len(argv) == 0 {
 		return Result{Error: fmt.Errorf("command line could not be reconstructed"), ErrMsg: "command line could not be reconstructed"}
 	}

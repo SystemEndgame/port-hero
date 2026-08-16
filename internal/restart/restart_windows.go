@@ -19,6 +19,11 @@ func buildCommand(argv []string, dir string) *exec.Cmd {
 	return cmd
 }
 
+// shellCommand renders a config start string for execution via cmd.exe.
+func shellCommand(cmd string) []string {
+	return []string{"cmd", "/C", cmd}
+}
+
 // detach releases the handle so the child outlives the parent.
 func detach(cmd *exec.Cmd) {
 	if cmd.Process != nil {

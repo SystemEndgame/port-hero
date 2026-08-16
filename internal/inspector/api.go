@@ -3,6 +3,8 @@ package inspector
 import (
 	"errors"
 	"strings"
+
+	"github.com/SystemEndgame/port-hero/internal/config"
 )
 
 // ErrPortFree is returned when nothing is listening on the requested port.
@@ -138,6 +140,12 @@ func Enrich(p *Process) {
 	}
 	if p.Project == "" && p.CWD != "" {
 		p.Project = ProjectName(p.CWD)
+	}
+	// Optional per-repo display name from .port-hero.yaml.
+	if p.CWD != "" {
+		if pc, err := config.FindProjectConfig(p.CWD); err == nil && pc != nil && pc.Name != "" {
+			p.Project = pc.Name
+		}
 	}
 	if p.GitBranch == "" && p.CWD != "" {
 		branch, dirty := gitInfo(p.CWD)

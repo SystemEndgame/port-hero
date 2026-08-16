@@ -49,7 +49,7 @@ git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 | 🚀 **Cross-platform single binary** | macOS (Intel/Apple Silicon), Linux, Windows. ~3.5 MB, starts in milliseconds, zero runtime dependencies. |
 | 🧪 **Scriptable** | `--json` output (including `--kill --json` / `--restart --json` for CI), meaningful exit codes (0–5), non-interactive `--kill` / `--force` / `--restart` for CI and shell pipelines. |
 | 🐚 **Shell completions** | `port --completion bash|zsh|fish` — tab completion for ports, flags and PIDs. |
-| ⚙️ **Config file** | `~/.port-hero/config.yaml` — custom grace period, whitelist (ports/processes), extra protected ports/daemons, log level & format. Safe defaults with zero config. |
+| ⚙️ **Config files** | Global `~/.port-hero/config.yaml` (grace period, whitelist, logging) **and** per-repo `.port-hero.yaml` (display name, start command) — discovered by walking up to the repository root. |
 | 🛡️ **PID-reuse protection** | On Linux, every signal is sent through a **pidfd** (atomic PID reference), so a recycled PID can never receive a signal meant for another process. On other platforms the owner + start-time are re-verified before signalling. |
 | 👁️ **Dry-run preview** | `port 3000 --kill --dry-run` shows exactly what would be terminated without sending a single signal. |
 | 📝 **Structured logging** | `--log-level debug|info|warn|error` and `--log-format text|json` (stdlib `slog`) for CI audit trails and log aggregation. |
@@ -256,6 +256,23 @@ protection:
     9000: "Admin dashboard"
   extra_protected_daemons: ["mycriticald"]
 ```
+
+### Project configuration — `.port-hero.yaml`
+
+Drop a file at your repository root to make Port Hero **team-aware**. It is
+discovered by walking up from the process working directory to the enclosing
+git root, so it works even when a process `chdir`s into a subdirectory.
+
+```yaml
+# .port-hero.yaml
+name: "golively-api"     # shown instead of the repo directory name
+start: "npm run dev"     # used by --restart (preserves npm/go/docker context)
+```
+
+- `name` overrides the project name shown in the TUI and `--json`.
+- `start` is what `--restart` runs. Preferring it over raw argv reconstruction
+  keeps the package-manager context (`npm run dev`, `go run`, `docker compose
+  up`) and round-trips quotes on every platform — the one case raw argv cannot.
 
 ### Whitelist — What It Does & Doesn't Do
 

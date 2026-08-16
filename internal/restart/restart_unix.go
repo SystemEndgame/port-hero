@@ -16,6 +16,11 @@ func buildCommand(argv []string, dir string) *exec.Cmd {
 	return cmd
 }
 
+// shellCommand renders a config start string for execution via the shell.
+func shellCommand(cmd string) []string {
+	return []string{"/bin/sh", "-c", cmd}
+}
+
 // detach: with Setsid already applied, we only need to Release so the child
 // is not reaped (and killed) with the parent.
 func detach(cmd *exec.Cmd) {
