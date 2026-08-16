@@ -54,15 +54,19 @@ release:
   draft: true
 
 # Homebrew tap formula generation.
-brews:
-  - name: port-hero
-    repository:
-      owner: SystemEndgame
-      name: homebrew-tap
-    homepage: "https://github.com/SystemEndgame/port-hero"
-    description: "The local port manager you actually trust — inspect, trace and gracefully kill processes on a port."
-    license: MIT
-    test: |
-      system "#{bin}/port-hero", "--version"
-    install: |
-      bin.install "port-hero"
+# NOTE: disabled until a HOMEBREW_TAP_TOKEN secret is set in the repo —
+# the workflow's GITHUB_TOKEN cannot push to SystemEndgame/homebrew-tap.
+# Re-enable by uncommenting and adding the secret to the release workflow:
+#   env: { HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} }
+# brews:
+#   - name: port-hero
+#     repository:
+#       owner: SystemEndgame
+#       name: homebrew-tap
+#     homepage: "https://github.com/SystemEndgame/port-hero"
+#     description: "The local port manager you actually trust — inspect, trace and gracefully kill processes on a port."
+#     license: MIT
+#     test: |
+#       system "#{bin}/port-hero", "--version"
+#     install: |
+#       bin.install "port-hero"
