@@ -15,9 +15,7 @@ import (
 	"syscall"
 )
 
-// ---------------------------------------------------------------------------
 // Port → PIDs via lsof (preinstalled on macOS).
-// ---------------------------------------------------------------------------
 
 // platformFindByPort returns processes listening on a TCP port.
 func platformFindByPort(port int) ([]*Process, error) {
@@ -186,9 +184,7 @@ func platformAllProcesses() ([]*Process, error) {
 	return procs, nil
 }
 
-// ---------------------------------------------------------------------------
 // Helpers.
-// ---------------------------------------------------------------------------
 
 type lsofEntry struct {
 	pid       int

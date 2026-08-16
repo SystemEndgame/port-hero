@@ -365,9 +365,7 @@ Built with ❤ by GoLive — free, zero-knowledge dev tools at golive.ly
 `)
 }
 
-// ---------------------------------------------------------------------------
 // Causality tracing (the "why is this running?" engine).
-// ---------------------------------------------------------------------------
 
 func runWhy(o *options) {
 	targets, code := whyTargets(o)
@@ -477,9 +475,7 @@ func gitStatusLabel(p *inspector.Process) string {
 	return fmt.Sprintf("%s [CLEAN]", p.GitBranch)
 }
 
-// ---------------------------------------------------------------------------
 // File locks.
-// ---------------------------------------------------------------------------
 
 func runFileLocks(o *options) {
 	holders, err := locks.ByFile(o.file)
@@ -505,9 +501,7 @@ func runFileLocks(o *options) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // JSON.
-// ---------------------------------------------------------------------------
 
 func runJSON(o *options) {
 	var (
@@ -545,9 +539,7 @@ func runJSON(o *options) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Kill / force / restart.
-// ---------------------------------------------------------------------------
 
 // runAction resolves the target process(es) and executes kill/force/restart.
 // It supports --pid targeting, --all for multi-process ports, --dry-run

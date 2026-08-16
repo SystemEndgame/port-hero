@@ -82,7 +82,7 @@ go install github.com/SystemEndgame/port-hero@latest
 git clone https://github.com/SystemEndgame/port-hero.git
 cd port-hero
 make build          # binaries/port-hero
-make install        # installs to ~/bin or /usr/local/bin
+make install        # installs to ~/.local/bin (add it to PATH if needed)
 ```
 
 ---
@@ -308,11 +308,18 @@ port-hero/
 
 ## 📦 Releases
 
-| Platform | Arch | Binary |
+Every release publishes prebuilt archives and a `checksums.txt` for SHA256
+verification. The [`install.sh`](install.sh) installer downloads the archive
+for your platform and verifies its checksum before installing.
+
+| Platform | Arch | Asset |
 |---|---|---|
-| macOS | arm64 / amd64 | `port-hero-darwin-{arm64,amd64}` |
-| Linux | amd64 / arm64 | `port-hero-linux-{amd64,arm64}` |
-| Windows | amd64 | `port-hero-windows-amd64.exe` |
+| macOS | arm64 / amd64 | `port-hero-darwin-{arm64,amd64}.tar.gz` |
+| Linux | amd64 / arm64 | `port-hero-linux-{amd64,arm64}.tar.gz` |
+| Windows | amd64 | `port-hero-windows-amd64.zip` |
+
+> Built from a git tag by [GoReleaser](.goreleaser.yaml); releases start as
+> drafts and are published manually after review.
 
 ---
 

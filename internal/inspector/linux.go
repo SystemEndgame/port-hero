@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-// ---------------------------------------------------------------------------
 // /proc/net parsing — pure Go, zero external dependencies.
-// ---------------------------------------------------------------------------
 
 // procNetLine is one parsed row of /proc/net/tcp{,6}.
 type procNetLine struct {
