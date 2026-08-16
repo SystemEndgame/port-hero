@@ -17,9 +17,9 @@ import (
 
 // Port → PIDs via lsof (preinstalled on macOS).
 
-// platformFindByPort returns processes listening on a TCP port.
-func platformFindByPort(port int) ([]*Process, error) {
-	pids, err := darwinLsofPIDs(port)
+// platformFindByPort returns processes bound to a port for the protocol.
+func platformFindByPort(port int, proto string) ([]*Process, error) {
+	pids, err := darwinLsofPIDs(port, proto)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func platformFindByPort(port int) ([]*Process, error) {
 	}
 	for _, p := range procs {
 		p.Port = port
-		p.Protocol = "tcp"
+		p.Protocol = proto
 	}
 	return procs, nil
 }
@@ -51,7 +51,7 @@ func darwinProcessesForPIDs(pids []int) ([]*Process, error) {
 		if !ok {
 			continue
 		}
-		procs = append(procs, &Process{
+		p := &Process{
 			PID:        pid,
 			PPID:       s.ppid,
 			Name:       s.name,
@@ -60,14 +60,17 @@ func darwinProcessesForPIDs(pids []int) ([]*Process, error) {
 			MemoryMB:   s.rssMB,
 			CPUPercent: s.cpu,
 			CWD:        cwds[pid],
-		})
+		}
+		darwinEnrichArgv(p)
+		procs = append(procs, p)
 	}
 	return procs, nil
 }
 
-// platformFindAll returns all TCP LISTEN processes in one batched sweep.
-func platformFindAll() ([]*Process, error) {
-	entries, err := darwinLsofAllListeners()
+// platformFindAll returns all listening processes for the protocol in one
+// batched sweep.
+func platformFindAll(proto string) ([]*Process, error) {
+	entries, err := darwinLsofAllListeners(proto)
 	if err != nil {
 		return nil, err
 	}
@@ -105,12 +108,13 @@ func platformFindAll() ([]*Process, error) {
 			Command:    s.command,
 			User:       s.user, // ps gives the login name; lsof only the UID
 			Port:       e.port,
-			Protocol:   "tcp",
+			Protocol:   proto,
 			LocalAddr:  e.localAddr,
 			MemoryMB:   s.rssMB,
 			CPUPercent: s.cpu,
 			CWD:        cwds[e.pid],
 		}
+		darwinEnrichArgv(p)
 		procs = append(procs, p)
 	}
 	return procs, nil
@@ -146,6 +150,7 @@ func platformGetProcessNoCPU(pid int) (*Process, error) {
 		CPUPercent: s.cpu,
 		CWD:        darwinCwds([]int{pid})[pid],
 	}
+	darwinEnrichArgv(p)
 	return p, nil
 }
 
@@ -195,9 +200,16 @@ type lsofEntry struct {
 	command   string
 }
 
-// darwinLsofPIDs returns PIDs listening on port.
-func darwinLsofPIDs(port int) ([]int, error) {
-	out, err := exec.Command("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output()
+// darwinLsofPIDs returns PIDs bound to port for the protocol.
+func darwinLsofPIDs(port int, proto string) ([]int, error) {
+	args := []string{"-nP"}
+	if proto == "udp" {
+		args = append(args, "-iUDP:"+strconv.Itoa(port))
+	} else {
+		args = append(args, "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN")
+	}
+	args = append(args, "-t")
+	out, err := exec.Command("lsof", args...).Output()
 	if err != nil {
 		// lsof returns exit 1 when nothing matches.
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
@@ -217,9 +229,17 @@ func darwinLsofPIDs(port int) ([]int, error) {
 	return pids, nil
 }
 
-// darwinLsofAllListeners parses `lsof -F pcnu` records for all TCP listeners.
-func darwinLsofAllListeners() ([]lsofEntry, error) {
-	out, err := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcnu").Output()
+// darwinLsofAllListeners parses `lsof -F pcnu` records for all listeners of
+// the protocol.
+func darwinLsofAllListeners(proto string) ([]lsofEntry, error) {
+	args := []string{"-nP"}
+	if proto == "udp" {
+		args = append(args, "-iUDP")
+	} else {
+		args = append(args, "-iTCP", "-sTCP:LISTEN")
+	}
+	args = append(args, "-F", "pcnu")
+	out, err := exec.Command("lsof", args...).Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return nil, nil

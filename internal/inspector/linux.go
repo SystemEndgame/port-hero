@@ -29,9 +29,17 @@ const procRoot = "/proc"
 // listenState is the TCP state code for LISTEN in /proc/net/tcp.
 const listenState = "0A"
 
-// platformFindByPort resolves a port via /proc/net/tcp + inode→PID scan.
-func platformFindByPort(port int) ([]*Process, error) {
-	lines, err := procNetListeners()
+// procFiles maps a protocol to its /proc/net table files.
+func procFiles(proto string) []string {
+	if proto == "udp" {
+		return []string{"/proc/net/udp", "/proc/net/udp6"}
+	}
+	return []string{"/proc/net/tcp", "/proc/net/tcp6"}
+}
+
+// platformFindByPort resolves a port via /proc/net/{tcp,udp} + inode→PID scan.
+func platformFindByPort(port int, proto string) ([]*Process, error) {
+	lines, err := procNetLines(proto)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +64,7 @@ func platformFindByPort(port int) ([]*Process, error) {
 			continue
 		}
 		p.Port = port
-		p.Protocol = "tcp"
+		p.Protocol = proto
 		p.LocalAddr = l.addr
 		procs = append(procs, p)
 	}
@@ -66,10 +74,11 @@ func platformFindByPort(port int) ([]*Process, error) {
 	return procs, nil
 }
 
-// platformFindAll returns every TCP LISTEN process. CPU usage is computed in
-// a single two-sample sweep so N listeners cost one 250 ms window, not N.
-func platformFindAll() ([]*Process, error) {
-	lines, err := procNetListeners()
+// platformFindAll returns every listening process for the protocol. CPU usage
+// is computed in a single two-sample sweep so N listeners cost one 250 ms
+// window, not N.
+func platformFindAll(proto string) ([]*Process, error) {
+	lines, err := procNetLines(proto)
 	if err != nil {
 		return nil, err
 	}
@@ -91,12 +100,77 @@ func platformFindAll() ([]*Process, error) {
 			continue
 		}
 		p.Port = l.port
-		p.Protocol = "tcp"
+		p.Protocol = proto
 		p.LocalAddr = l.addr
 		procs = append(procs, p)
 	}
 	platformBatchCPU(procs)
 	return procs, nil
+}
+
+// procNetLines parses the /proc/net tables for a protocol. TCP rows are
+// filtered to LISTEN; UDP rows are taken as-is (every bound UDP socket).
+func procNetLines(proto string) ([]procNetLine, error) {
+	var out []procNetLine
+	for _, file := range procFiles(proto) {
+		lines, err := parseProcNetFile(file, proto)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue // the ipv6 table may be absent on some kernels
+			}
+			return nil, err
+		}
+		out = append(out, lines...)
+	}
+	return out, nil
+}
+
+// parseProcNetFile parses one /proc/net table, applying the protocol's
+// state filter.
+func parseProcNetFile(path, proto string) ([]procNetLine, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var out []procNetLine
+	sc := bufio.NewScanner(f)
+	first := true
+	for sc.Scan() {
+		if first { // header line
+			first = false
+			continue
+		}
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 10 {
+			continue
+		}
+		if proto == "tcp" && fields[3] != listenState {
+			continue
+		}
+		local := fields[1] // hex IP:hex port
+		idx := strings.LastIndex(local, ":")
+		if idx < 0 {
+			continue
+		}
+		portHex := local[idx+1:]
+		ipHex := local[:idx]
+		port64, err := strconv.ParseUint(portHex, 16, 32)
+		if err != nil {
+			continue
+		}
+		inode, err := strconv.ParseUint(fields[9], 10, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, procNetLine{
+			inode: inode,
+			port:  int(port64),
+			addr:  decodeProcIP(ipHex, path),
+		})
+	}
+	return out, sc.Err()
 }
 
 // platformGetProcess reads full info from /proc, including a live CPU sample.
@@ -176,66 +250,9 @@ func platformCWD(pid int) string {
 	return dst
 }
 
-// procNetListeners parses /proc/net/tcp and /proc/net/tcp6 for LISTEN rows.
-func procNetListeners() ([]procNetLine, error) {
-	var out []procNetLine
-	for _, file := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
-		lines, err := parseProcNet(file)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue // tcp6 may be absent on some kernels
-			}
-			return nil, err
-		}
-		out = append(out, lines...)
-	}
-	return out, nil
-}
-
+// parseProcNet parses a TCP table (kept for fuzz-testing the parser).
 func parseProcNet(path string) ([]procNetLine, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-
-	var out []procNetLine
-	sc := bufio.NewScanner(f)
-	first := true
-	for sc.Scan() {
-		if first { // header line
-			first = false
-			continue
-		}
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 10 {
-			continue
-		}
-		if fields[3] != listenState {
-			continue
-		}
-		local := fields[1] // hex IP:hex port
-		idx := strings.LastIndex(local, ":")
-		if idx < 0 {
-			continue
-		}
-		portHex := local[idx+1:]
-		ipHex := local[:idx]
-		port64, err := strconv.ParseUint(portHex, 16, 32)
-		if err != nil {
-			continue
-		}
-		inode, err := strconv.ParseUint(fields[9], 10, 64)
-		if err != nil {
-			continue
-		}
-		out = append(out, procNetLine{
-			inode: inode,
-			port:  int(port64),
-			addr:  decodeProcIP(ipHex, path),
-		})
-	}
-	return out, sc.Err()
+	return parseProcNetFile(path, "tcp")
 }
 
 // decodeProcIP converts the little-endian hex IP from /proc/net into

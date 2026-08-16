@@ -65,6 +65,7 @@ type options struct {
 	wait        bool
 	next        bool
 	timeout     time.Duration
+	protocol    string
 	completion  string
 	logLevel    string
 	logFormat   string
@@ -132,7 +133,7 @@ func runCheck(o *options) {
 	if o.port <= 0 {
 		fatalExit(fmt.Errorf("--check requires a port (e.g. port --check 3000)"), cli.ExitInvalid)
 	}
-	_, err := inspector.FindByPort(o.port)
+	_, err := inspector.FindByPortProto(o.port, o.protocol)
 	if err == inspector.ErrPortFree {
 		fmt.Printf("port %d is free\n", o.port)
 		os.Exit(cli.ExitNotFound)
@@ -155,7 +156,7 @@ func runWait(o *options) {
 	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if _, err := inspector.FindByPort(o.port); err == inspector.ErrPortFree {
+		if _, err := inspector.FindByPortProto(o.port, o.protocol); err == inspector.ErrPortFree {
 			fmt.Printf("port %d is free\n", o.port)
 			return
 		}
@@ -171,7 +172,7 @@ func runNext(o *options) {
 	if start <= 0 {
 		start = 3000
 	}
-	procs, err := inspector.FindAll()
+	procs, err := inspector.FindAllProto(o.protocol)
 	if err != nil {
 		fatalExit(err, cli.ExitInternal)
 	}
@@ -268,7 +269,7 @@ func setupLogging(level, format string) {
 }
 
 func parseArgs(args []string) (options, error) {
-	o := options{}
+	o := options{protocol: "tcp"}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -345,7 +346,7 @@ func isBoolFlag(a string) bool {
 	switch a {
 	case "--kill", "-k", "--force", "-F", "--restart", "-r", "--why",
 		"--json", "-j", "--all", "--dry-run", "--check", "--wait", "--next",
-		"--no-altscreen", "--version", "-v", "--help", "-h":
+		"--udp", "--no-altscreen", "--version", "-v", "--help", "-h":
 		return true
 	}
 	return false
@@ -371,6 +372,8 @@ func setBoolFlag(o *options, a string) {
 		o.wait = true
 	case "--next":
 		o.next = true
+	case "--udp":
+		o.protocol = "udp"
 	case "--json", "-j":
 		o.json = true
 	case "--no-altscreen":
@@ -385,7 +388,8 @@ func setBoolFlag(o *options, a string) {
 // isValueFlag reports whether a requires a following value argument.
 func isValueFlag(a string) bool {
 	return a == "--pid" || a == "--file" || a == "--completion" ||
-		a == "--log-level" || a == "--log-format" || a == "--timeout"
+		a == "--log-level" || a == "--log-format" || a == "--timeout" ||
+		a == "--protocol"
 }
 
 // flagValue returns the value following a value flag.
@@ -418,6 +422,11 @@ func setValueFlag(o *options, a, val string) error {
 			return fmt.Errorf("invalid --timeout %q (use e.g. 30s, 2m)", val)
 		}
 		o.timeout = d
+	case "--protocol":
+		if err := inspector.ValidateProtocol(val); err != nil {
+			return err
+		}
+		o.protocol = val
 	}
 	return nil
 }
@@ -457,6 +466,8 @@ USAGE:
   port --wait 3000         Wait until port 3000 is free (default 30s)
   port --wait 3000 --timeout 90s   Wait with a custom timeout
   port --next 3000         Print the first free port at or above 3000
+  port 53 --udp            Query UDP (default is TCP)
+  port --protocol udp 53   Same as above (tcp|udp)
   port --version           Print version
 
 EXIT CODES:
@@ -518,10 +529,10 @@ func whyTargets(o *options) (targets []*inspector.Process, code int) {
 		}
 		return []*inspector.Process{p}, 0
 	case o.port > 0:
-		procs, err := inspector.FindByPort(o.port)
+		procs, err := inspector.FindByPortProto(o.port, o.protocol)
 		if err != nil {
 			if err == inspector.ErrPortFree {
-				fmt.Printf("Nothing is listening on port %d.\n", o.port)
+				fmt.Printf("Nothing is listening on port %d (%s).\n", o.port, o.protocol)
 				return nil, cli.ExitNotFound
 			}
 			fatalExit(err, cli.ExitInternal)
@@ -623,7 +634,7 @@ func runJSON(o *options) {
 	)
 	switch {
 	case o.port > 0:
-		procs, err = inspector.FindByPort(o.port)
+		procs, err = inspector.FindByPortProto(o.port, o.protocol)
 	case o.name != "":
 		procs, err = inspector.FindByName(o.name, 0)
 	case o.pid > 0:
@@ -633,7 +644,7 @@ func runJSON(o *options) {
 			procs = []*inspector.Process{p}
 		}
 	default:
-		procs, err = inspector.FindAll()
+		procs, err = inspector.FindAllProto(o.protocol)
 	}
 	if err != nil {
 		if err == inspector.ErrPortFree {
@@ -791,10 +802,10 @@ func actionTargets(o *options) (procs []*inspector.Process, code int) {
 		}
 		return []*inspector.Process{p}, 0
 	case o.port > 0:
-		procs, err := inspector.FindByPort(o.port)
+		procs, err := inspector.FindByPortProto(o.port, o.protocol)
 		if err != nil {
 			if err == inspector.ErrPortFree {
-				fmt.Println("Nothing listening on port", o.port)
+				fmt.Printf("Nothing listening on port %d (%s).\n", o.port, o.protocol)
 				return nil, cli.ExitNotFound
 			}
 			fatalExit(err, cli.ExitInternal)

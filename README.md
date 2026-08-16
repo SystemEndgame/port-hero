@@ -114,6 +114,8 @@ port --check 3000           # exit 0 if busy, 2 if free (CI scripts)
 port --wait 3000            # wait until the port is free (default 30s)
 port --wait 3000 --timeout 90s   # wait with a custom timeout
 port --next 3000            # print the first free port at or above 3000
+port 53 --udp               # query UDP instead of TCP (DNS, NTP, mDNS…)
+port --protocol udp 3000    # same as --udp (tcp|udp)
 port --version
 ```
 
@@ -368,7 +370,7 @@ Port Hero never escalates privileges and only inspects what the invoking user ca
 
 ## ⚠️ Known limitations
 
-- **TCP only** — UDP listeners are not listed.
+- **TCP by default** — UDP is available via `--udp` / `--protocol udp`. UDP has no "listening" state, so bound client sockets appear too.
 - **Container detection is Linux-only** (cgroup parsing). macOS/Windows containers are not labelled.
 - **macOS lock listing** is per-file via `lsof`; a system-wide `--file` sweep is not supported (`port --file <path>` works).
 - **macOS restart command reconstruction** splits the command line naively; arguments containing spaces/quotes may not round-trip perfectly.

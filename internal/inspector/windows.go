@@ -12,33 +12,18 @@ import (
 )
 
 // platformFindByPort resolves a port via `netstat -ano`.
-func platformFindByPort(port int) ([]*Process, error) {
-	out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
-	if err != nil {
-		return nil, fmt.Errorf("netstat failed: %w", err)
-	}
+func platformFindByPort(port int, proto string) ([]*Process, error) {
+	rows := windowsNetstat(proto)
 	pids := map[int]bool{}
-	sc := bufio.NewScanner(strings.NewReader(string(out)))
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		// Format: proto local foreign state PID
-		if len(fields) < 5 || !strings.EqualFold(fields[0], "TCP") {
+	for _, r := range rows {
+		if r.port != port {
 			continue
 		}
-		if !strings.EqualFold(fields[3], "LISTENING") {
+		if proto == "tcp" && !strings.EqualFold(r.state, "LISTENING") {
 			continue
 		}
-		_, portStr, err := splitWindowsAddr(fields[1])
-		if err != nil {
-			continue
-		}
-		p, _ := strconv.Atoi(portStr)
-		if p != port {
-			continue
-		}
-		pid, _ := strconv.Atoi(fields[4])
-		if pid > 0 {
-			pids[pid] = true
+		if r.pid > 0 {
+			pids[r.pid] = true
 		}
 	}
 	if len(pids) == 0 {
@@ -51,27 +36,64 @@ func platformFindByPort(port int) ([]*Process, error) {
 			continue
 		}
 		p.Port = port
-		p.Protocol = "tcp"
+		p.Protocol = proto
 		procs = append(procs, p)
 	}
 	return procs, nil
 }
 
-// platformFindAll: every TCP LISTENING process.
-func platformFindAll() ([]*Process, error) {
-	out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
-	if err != nil {
-		return nil, fmt.Errorf("netstat failed: %w", err)
-	}
+// platformFindAll: every listening process for the protocol.
+func platformFindAll(proto string) ([]*Process, error) {
+	rows := windowsNetstat(proto)
 	seen := map[int]bool{}
 	var procs []*Process
+	for _, r := range rows {
+		if proto == "tcp" && !strings.EqualFold(r.state, "LISTENING") {
+			continue
+		}
+		if r.pid <= 0 || seen[r.pid] {
+			continue
+		}
+		p, err := platformGetProcess(r.pid)
+		if err != nil {
+			continue
+		}
+		p.Port = r.port
+		p.Protocol = proto
+		p.LocalAddr = r.addr
+		seen[r.pid] = true
+		procs = append(procs, p)
+	}
+	return procs, nil
+}
+
+// netstatRow is one parsed netstat endpoint.
+type netstatRow struct {
+	proto string
+	addr  string
+	port  int
+	state string
+	pid   int
+}
+
+// windowsNetstat runs netstat for the protocol and parses the rows.
+func windowsNetstat(proto string) []netstatRow {
+	p := proto
+	if p == "udp" {
+		p = "udp"
+	} else {
+		p = "tcp"
+	}
+	out, err := exec.Command("netstat", "-ano", "-p", p).Output()
+	if err != nil {
+		return nil
+	}
+	protoUp := strings.ToUpper(proto)
+	var rows []netstatRow
 	sc := bufio.NewScanner(strings.NewReader(string(out)))
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
-		if len(fields) < 5 || !strings.EqualFold(fields[0], "TCP") {
-			continue
-		}
-		if !strings.EqualFold(fields[3], "LISTENING") {
+		if len(fields) < 5 || !strings.EqualFold(fields[0], protoUp) {
 			continue
 		}
 		addr, portStr, err := splitWindowsAddr(fields[1])
@@ -80,19 +102,13 @@ func platformFindAll() ([]*Process, error) {
 		}
 		port, _ := strconv.Atoi(portStr)
 		pid, _ := strconv.Atoi(fields[4])
-		if pid <= 0 || seen[pid] {
-			continue
+		state := ""
+		if proto == "tcp" {
+			state = fields[3]
 		}
-		p, err := platformGetProcess(pid)
-		if err != nil {
-			continue
-		}
-		p.Port = port
-		p.LocalAddr = addr
-		seen[pid] = true
-		procs = append(procs, p)
+		rows = append(rows, netstatRow{proto: proto, addr: addr, port: port, state: state, pid: pid})
 	}
-	return procs, nil
+	return rows
 }
 
 // platformGetProcess resolves details via tasklist + PowerShell.

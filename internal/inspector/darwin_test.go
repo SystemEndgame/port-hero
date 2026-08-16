@@ -2,7 +2,10 @@
 
 package inspector
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestParseLsofName(t *testing.T) {
 	cases := map[string]struct{ addr, proto string }{
@@ -18,6 +21,33 @@ func TestParseLsofName(t *testing.T) {
 		if addr != want.addr || proto != want.proto {
 			t.Errorf("parseLsofName(%q) = (%q, %q), want (%q, %q)", in, addr, proto, want.addr, want.proto)
 		}
+	}
+}
+
+func TestDarwinCommandLine(t *testing.T) {
+	argv, ok := darwinCommandLine(os.Getpid())
+	if !ok {
+		t.Fatal("darwinCommandLine should succeed on our own process")
+	}
+	if len(argv) == 0 || argv[0] == "" {
+		t.Fatalf("expected non-empty argv, got %q", argv)
+	}
+	// The exact argv must preserve argument boundaries: the test binary's
+	// own command line ends with "-test.v" style flags as separate tokens.
+	t.Logf("argv[0]=%q argv=%q", argv[0], argv)
+}
+
+func TestDarwinEnrichArgv(t *testing.T) {
+	p := &Process{PID: os.Getpid(), Name: "stale", Command: "stale command"}
+	darwinEnrichArgv(p)
+	if p.Command == "stale command" {
+		t.Error("expected exact argv to replace the ps-derived command")
+	}
+	if len(p.Argv) == 0 {
+		t.Error("expected exact argv to be populated")
+	}
+	if p.Name == "stale" {
+		t.Error("expected name to be derived from the executable path")
 	}
 }
 

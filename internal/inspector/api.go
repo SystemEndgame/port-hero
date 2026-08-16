@@ -2,6 +2,7 @@ package inspector
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/SystemEndgame/port-hero/internal/config"
@@ -14,10 +15,18 @@ var ErrPortFree = errors.New("no process is listening on this port")
 // On the rare case that multiple processes bind the same port (SO_REUSEPORT),
 // all of them are returned. Processes are enriched with cwd/git/container.
 func FindByPort(port int) ([]*Process, error) {
+	return FindByPortProto(port, "tcp")
+}
+
+// FindByPortProto is FindByPort for an explicit protocol ("tcp" or "udp").
+func FindByPortProto(port int, proto string) ([]*Process, error) {
 	if port < 1 || port > 65535 {
 		return nil, errors.New("port must be between 1 and 65535")
 	}
-	procs, err := platformFindByPort(port)
+	if err := ValidateProtocol(proto); err != nil {
+		return nil, err
+	}
+	procs, err := platformFindByPort(port, proto)
 	if err != nil {
 		return nil, err
 	}
@@ -29,9 +38,16 @@ func FindByPort(port int) ([]*Process, error) {
 }
 
 // FindAll returns every TCP process currently in LISTEN state, enriched.
-// Ports can be restricted with maxPorts (0 = unlimited).
 func FindAll() ([]*Process, error) {
-	procs, err := platformFindAll()
+	return FindAllProto("tcp")
+}
+
+// FindAllProto is FindAll for an explicit protocol ("tcp" or "udp").
+func FindAllProto(proto string) ([]*Process, error) {
+	if err := ValidateProtocol(proto); err != nil {
+		return nil, err
+	}
+	procs, err := platformFindAll(proto)
 	if err != nil {
 		return nil, err
 	}
@@ -40,6 +56,14 @@ func FindAll() ([]*Process, error) {
 	}
 	SortByPort(procs)
 	return procs, nil
+}
+
+// ValidateProtocol reports whether proto is a supported protocol.
+func ValidateProtocol(proto string) error {
+	if proto != "tcp" && proto != "udp" {
+		return fmt.Errorf("unsupported protocol %q (use tcp or udp)", proto)
+	}
+	return nil
 }
 
 // GetProcess returns full enriched information about a single PID,
