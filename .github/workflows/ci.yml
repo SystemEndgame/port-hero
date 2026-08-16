@@ -22,7 +22,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pin to a v2 release: the .golangci.yml uses the v2 schema, and
+          # `latest` can resolve to a v1.x binary that rejects it.
+          version: v2.12.2
           args: --timeout=5m
 
   test:
