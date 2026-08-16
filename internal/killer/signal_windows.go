@@ -17,3 +17,7 @@ func send(pid int, s Signal) error {
 	}
 	return proc.Signal(syscall.SIGTERM) // maps to TerminateProcess in os
 }
+
+// wake is a no-op on Windows: there is no POSIX SIGCONT equivalent and
+// processes are not subject to stopped-state handling.
+func wake(_ int) error { return nil }

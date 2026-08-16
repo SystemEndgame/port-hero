@@ -217,18 +217,29 @@ func AutoRestart(pid int) (managed bool, manager, detail string) {
 		return true, platformManagerName(), unit
 	}
 
-	// Weaker signal: a launchd/systemd ancestor in the parent chain.
+	// Dev process managers (npm, yarn, pm2…) run under "node" and are only
+	// detectable from the parent's command line. A parent like `npm run dev`
+	// will respawn the target after it is killed, so warn about it.
+	if parent, ok := byPID[pid]; ok && parent.PPID > 0 {
+		if full, err := inspector.GetProcessNoCPU(parent.PPID); err == nil {
+			if m := devProcessManager(full.Name, full.Command); m != "" {
+				return true, m, m + " parent may respawn the process after it is killed"
+			}
+		}
+	}
+
+	return respawnSupervisorAncestor(byPID, pid)
+}
+
+// respawnSupervisorAncestor walks the parent chain looking for a supervisor
+// known to respawn its children after they exit.
+func respawnSupervisorAncestor(byPID map[int]*inspector.Process, pid int) (managed bool, manager, detail string) {
 	seen := map[int]bool{}
 	for cur := pid; cur > 0 && !seen[cur]; cur = parentOf(byPID, cur) {
 		seen[cur] = true
 		if p, ok := byPID[cur]; ok {
-			if label, isSuper := supervisorTable[p.Name]; isSuper {
-				switch label {
-				case "launchd":
-					return true, "launchd", "ancestor launchd may keep the process alive"
-				case "systemd":
-					return true, "systemd", "ancestor systemd may restart the unit"
-				}
+			if label, isSuper := supervisorTable[p.Name]; isSuper && isRespawnManager(label) {
+				return true, label, "ancestor " + label + " may restart the process"
 			}
 		}
 		if cur == 1 {
@@ -236,4 +247,41 @@ func AutoRestart(pid int) (managed bool, manager, detail string) {
 		}
 	}
 	return false, "", ""
+}
+
+// isRespawnManager reports whether a supervisor label is known to respawn
+// its children after they exit.
+func isRespawnManager(label string) bool {
+	switch label {
+	case "launchd", "systemd", "npm", "yarn", "pnpm", "pm2", "nodemon", "forever", "supervisor":
+		return true
+	}
+	return false
+}
+
+// devProcessManager detects npm/yarn/pnpm/pm2/nodemon/forever from a process
+// name or command line. These run under "node", so the argv is the signal.
+func devProcessManager(name, command string) string {
+	if label, ok := supervisorTable[name]; ok {
+		switch label {
+		case "npm", "yarn", "pnpm", "pm2", "nodemon", "forever", "supervisor":
+			return label
+		}
+	}
+	low := strings.ToLower(command)
+	switch {
+	case strings.Contains(low, "npm-cli"):
+		return "npm"
+	case strings.Contains(low, "yarn"):
+		return "yarn"
+	case strings.Contains(low, "pnpm"):
+		return "pnpm"
+	case strings.Contains(low, "pm2"):
+		return "pm2"
+	case strings.Contains(low, "nodemon"):
+		return "nodemon"
+	case strings.Contains(low, "forever"):
+		return "forever"
+	}
+	return ""
 }

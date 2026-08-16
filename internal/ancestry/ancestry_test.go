@@ -42,6 +42,38 @@ func TestClassifySupervisor(t *testing.T) {
 	}
 }
 
+func TestDevProcessManager(t *testing.T) {
+	cases := map[string]string{
+		// npm runs under "node"; the argv is the reliable signal.
+		"node /usr/lib/node_modules/npm/bin/npm-cli.js run dev": "npm",
+		"yarn run dev":        "yarn",
+		"pnpm dev":            "pnpm",
+		"pm2 start server.js": "pm2",
+		"node server.js":      "", // plain node is not a manager
+	}
+	for cmd, want := range cases {
+		if got := devProcessManager("node", cmd); got != want {
+			t.Errorf("devProcessManager(%q) = %q, want %q", cmd, got, want)
+		}
+	}
+	if got := devProcessManager("npm", "npm run dev"); got != "npm" {
+		t.Errorf("name-based npm detection failed: %q", got)
+	}
+}
+
+func TestIsRespawnManager(t *testing.T) {
+	for _, label := range []string{"launchd", "systemd", "npm", "yarn", "pm2", "nodemon", "forever", "supervisor"} {
+		if !isRespawnManager(label) {
+			t.Errorf("isRespawnManager(%q) = false, want true", label)
+		}
+	}
+	for _, label := range []string{"nginx", "apache2", "tmux", "screen"} {
+		if isRespawnManager(label) {
+			t.Errorf("isRespawnManager(%q) = true, want false", label)
+		}
+	}
+}
+
 func TestBuildSelf(t *testing.T) {
 	chain, err := Build(os.Getpid())
 	if err != nil {

@@ -31,6 +31,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -60,6 +61,10 @@ type options struct {
 	dryRun      bool
 	why         bool
 	json        bool
+	check       bool
+	wait        bool
+	next        bool
+	timeout     time.Duration
 	completion  string
 	logLevel    string
 	logFormat   string
@@ -104,7 +109,83 @@ func main() {
 		return
 	}
 
+	// CI / scripting helpers.
+	if opts.check {
+		runCheck(&opts)
+		return
+	}
+	if opts.wait {
+		runWait(&opts)
+		return
+	}
+	if opts.next {
+		runNext(&opts)
+		return
+	}
+
 	runTUI(&opts, cfg)
+}
+
+// checkPort reports whether a port is currently busy. Exit 0 = busy, 2 =
+// free, so `port --check 3000 && echo busy || echo free` works in scripts.
+func runCheck(o *options) {
+	if o.port <= 0 {
+		fatalExit(fmt.Errorf("--check requires a port (e.g. port --check 3000)"), cli.ExitInvalid)
+	}
+	_, err := inspector.FindByPort(o.port)
+	if err == inspector.ErrPortFree {
+		fmt.Printf("port %d is free\n", o.port)
+		os.Exit(cli.ExitNotFound)
+	}
+	if err != nil {
+		fatalExit(err, cli.ExitInternal)
+	}
+	fmt.Printf("port %d is busy\n", o.port)
+	os.Exit(cli.ExitOK)
+}
+
+// waitForFree polls until the port is free or the timeout elapses.
+func runWait(o *options) {
+	if o.port <= 0 {
+		fatalExit(fmt.Errorf("--wait requires a port (e.g. port --wait 3000 --timeout 30s)"), cli.ExitInvalid)
+	}
+	timeout := o.timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := inspector.FindByPort(o.port); err == inspector.ErrPortFree {
+			fmt.Printf("port %d is free\n", o.port)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	fmt.Fprintf(os.Stderr, "⛔ port %d still busy after %s\n", o.port, timeout)
+	os.Exit(cli.ExitWarnings)
+}
+
+// nextFreePort prints the first free port at or above the given start.
+func runNext(o *options) {
+	start := o.port
+	if start <= 0 {
+		start = 3000
+	}
+	procs, err := inspector.FindAll()
+	if err != nil {
+		fatalExit(err, cli.ExitInternal)
+	}
+	busy := make(map[int]bool, len(procs))
+	for _, p := range procs {
+		busy[p.Port] = true
+	}
+	for p := start; p <= 65535; p++ {
+		if !busy[p] {
+			fmt.Println(p)
+			return
+		}
+	}
+	fatalExit(fmt.Errorf("no free port found starting at %d", start), cli.ExitNotFound)
 }
 
 // handleMetaFlags handles the immediate-exit flags (--help, --version,
@@ -217,15 +298,31 @@ func parseArgs(args []string) (options, error) {
 // validate checks cross-flag constraints. It is separate so parseArgs stays
 // a simple loop and the rules are easy to test.
 func (o *options) validate() error {
-	if o.port > 0 && o.name != "" {
+	if err := o.validateTargets(); err != nil {
+		return err
+	}
+	return o.validateLogging()
+}
+
+// validateTargets checks flag combinations that affect what the command acts on.
+func (o *options) validateTargets() error {
+	switch {
+	case o.port > 0 && o.name != "":
 		return fmt.Errorf("cannot combine a port (%d) and a process name (%q)", o.port, o.name)
-	}
-	if o.all && !o.kill && !o.force && !o.restart {
+	case o.all && !o.kill && !o.force && !o.restart:
 		return fmt.Errorf("--all requires --kill, --force or --restart")
-	}
-	if o.dryRun && !o.kill && !o.force && !o.restart {
+	case o.dryRun && !o.kill && !o.force && !o.restart:
 		return fmt.Errorf("--dry-run requires --kill, --force or --restart")
+	case o.check && o.port <= 0:
+		return fmt.Errorf("--check requires a port (e.g. port --check 3000)")
+	case o.wait && o.port <= 0:
+		return fmt.Errorf("--wait requires a port (e.g. port --wait 3000 --timeout 30s)")
 	}
+	return nil
+}
+
+// validateLogging validates the structured-logging flags.
+func (o *options) validateLogging() error {
 	if o.logLevel != "" {
 		switch o.logLevel {
 		case "debug", "info", "warn", "error":
@@ -247,8 +344,8 @@ func (o *options) validate() error {
 func isBoolFlag(a string) bool {
 	switch a {
 	case "--kill", "-k", "--force", "-F", "--restart", "-r", "--why",
-		"--json", "-j", "--all", "--dry-run", "--no-altscreen",
-		"--version", "-v", "--help", "-h":
+		"--json", "-j", "--all", "--dry-run", "--check", "--wait", "--next",
+		"--no-altscreen", "--version", "-v", "--help", "-h":
 		return true
 	}
 	return false
@@ -268,6 +365,12 @@ func setBoolFlag(o *options, a string) {
 		o.dryRun = true
 	case "--why":
 		o.why = true
+	case "--check":
+		o.check = true
+	case "--wait":
+		o.wait = true
+	case "--next":
+		o.next = true
 	case "--json", "-j":
 		o.json = true
 	case "--no-altscreen":
@@ -282,7 +385,7 @@ func setBoolFlag(o *options, a string) {
 // isValueFlag reports whether a requires a following value argument.
 func isValueFlag(a string) bool {
 	return a == "--pid" || a == "--file" || a == "--completion" ||
-		a == "--log-level" || a == "--log-format"
+		a == "--log-level" || a == "--log-format" || a == "--timeout"
 }
 
 // flagValue returns the value following a value flag.
@@ -309,6 +412,12 @@ func setValueFlag(o *options, a, val string) error {
 		o.logLevel = val
 	case "--log-format":
 		o.logFormat = val
+	case "--timeout":
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return fmt.Errorf("invalid --timeout %q (use e.g. 30s, 2m)", val)
+		}
+		o.timeout = d
 	}
 	return nil
 }
@@ -344,6 +453,10 @@ USAGE:
   port --completion bash   Print shell completion (bash|zsh|fish)
   port --log-level debug   Structured logging level (debug|info|warn|error)
   port --log-format json   Structured log format (text|json)
+  port --check 3000        Exit 0 if busy, 2 if free (CI scripts)
+  port --wait 3000         Wait until port 3000 is free (default 30s)
+  port --wait 3000 --timeout 90s   Wait with a custom timeout
+  port --next 3000         Print the first free port at or above 3000
   port --version           Print version
 
 EXIT CODES:

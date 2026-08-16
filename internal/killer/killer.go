@@ -26,6 +26,8 @@ type Signal int
 const (
 	// SignalTerm is SIGTERM — graceful termination.
 	SignalTerm Signal = 15
+	// SignalCont is SIGCONT — resumes a stopped process before termination.
+	SignalCont Signal = 18
 	// SignalKill is SIGKILL — forced termination.
 	SignalKill Signal = 9
 )
@@ -155,19 +157,11 @@ func Kill(p *inspector.Process, opts Options) (Result, error) {
 	start := time.Now()
 
 	// -- Phase 1: SIGTERM to the whole tree (children first) ----------
+	// Zombies are skipped here because IsAlive reports them as gone. Stopped
+	// processes are resumed first (wake → SIGCONT) so SIGTERM can run its
+	// graceful shutdown path instead of waiting for SIGKILL.
 	stillAlive := map[int]bool{}
-	for _, pid := range targets {
-		if !inspector.IsAlive(pid) {
-			res.Terminated = append(res.Terminated, pid)
-			continue
-		}
-		if err := send(pid, SignalTerm); err != nil {
-			res.Failed = append(res.Failed, pid)
-			log.Warn("SIGTERM failed", "target_pid", pid, "error", err)
-			continue
-		}
-		stillAlive[pid] = true
-	}
+	signalGraceful(&res, targets, stillAlive, log)
 	log.Info("SIGTERM sent to process tree", "targets", len(targets))
 
 	// -- Grace period --------------------------------------------------
@@ -217,6 +211,28 @@ func reverify(p *inspector.Process) error {
 		return fmt.Errorf("process %d owner changed from %q to %q; aborting", p.PID, p.User, fresh.User)
 	}
 	return nil
+}
+
+// signalGraceful resumes and SIGTERMs every target in order, recording the
+// survivors so the grace period and SIGKILL phase can follow.
+func signalGraceful(res *Result, targets []int, stillAlive map[int]bool, log *slog.Logger) {
+	for _, pid := range targets {
+		if !inspector.IsAlive(pid) {
+			res.Terminated = append(res.Terminated, pid)
+			continue
+		}
+		if err := wake(pid); err != nil {
+			res.Failed = append(res.Failed, pid)
+			log.Warn("SIGCONT failed", "target_pid", pid, "error", err)
+			continue
+		}
+		if err := send(pid, SignalTerm); err != nil {
+			res.Failed = append(res.Failed, pid)
+			log.Warn("SIGTERM failed", "target_pid", pid, "error", err)
+			continue
+		}
+		stillAlive[pid] = true
+	}
 }
 
 // forceKill sends SIGKILL to the survivors in the original (children-first)

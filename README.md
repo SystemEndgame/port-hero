@@ -50,7 +50,7 @@ git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 | 🧪 **Scriptable** | `--json` output (including `--kill --json` / `--restart --json` for CI), meaningful exit codes (0–5), non-interactive `--kill` / `--force` / `--restart` for CI and shell pipelines. |
 | 🐚 **Shell completions** | `port --completion bash|zsh|fish` — tab completion for ports, flags and PIDs. |
 | ⚙️ **Config file** | `~/.port-hero/config.yaml` — custom grace period, whitelist (ports/processes), extra protected ports/daemons, log level & format. Safe defaults with zero config. |
-| 🛡️ **PID-reuse protection** | Before signalling, Port Hero re-verifies the target's owner and (on Linux) start-time, so a recycled PID can never be killed by mistake. |
+| 🛡️ **PID-reuse protection** | On Linux, every signal is sent through a **pidfd** (atomic PID reference), so a recycled PID can never receive a signal meant for another process. On other platforms the owner + start-time are re-verified before signalling. |
 | 👁️ **Dry-run preview** | `port 3000 --kill --dry-run` shows exactly what would be terminated without sending a single signal. |
 | 📝 **Structured logging** | `--log-level debug|info|warn|error` and `--log-format text|json` (stdlib `slog`) for CI audit trails and log aggregation. |
 
@@ -110,6 +110,10 @@ port 3000 --restart --json  # machine-readable restart result (CI)
 port --completion bash      # shell completion (bash|zsh|fish)
 port --log-level debug      # structured log level (debug|info|warn|error)
 port --log-format json      # structured log format (text|json)
+port --check 3000           # exit 0 if busy, 2 if free (CI scripts)
+port --wait 3000            # wait until the port is free (default 30s)
+port --wait 3000 --timeout 90s   # wait with a custom timeout
+port --next 3000            # print the first free port at or above 3000
 port --version
 ```
 
