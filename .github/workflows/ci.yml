@@ -20,10 +20,10 @@ jobs:
           go-version: "1.26"
           cache: true
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # v7 is required for golangci-lint v2 (the .golangci.yml uses the v2
+        # schema; v6 refuses v2 binaries entirely).
+        uses: golangci/golangci-lint-action@v7
         with:
-          # Pin to a v2 release: the .golangci.yml uses the v2 schema, and
-          # `latest` can resolve to a v1.x binary that rejects it.
           version: v2.12.2
           args: --timeout=5m
 
