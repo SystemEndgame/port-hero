@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // ---------------------------------------------------------------------------
@@ -450,3 +452,13 @@ func platformIsAlive(pid int) bool {
 // platformParseCommand: on darwin the argv is already joined; the naive
 // whitespace split is fine for restart reconstruction in the common case.
 func platformParseCommand(_ string) []string { return nil }
+
+// osFindProcess is a thin wrapper so platformIsAlive can probe a PID.
+func osFindProcess(pid int) (*os.Process, error) {
+	return os.FindProcess(pid)
+}
+
+// probeSignal is signal 0 — used purely to test process existence.
+func probeSignal() syscall.Signal {
+	return syscall.Signal(0)
+}

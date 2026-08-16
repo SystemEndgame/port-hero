@@ -13,6 +13,9 @@ import (
 	"github.com/SystemEndgame/port-hero/internal/inspector"
 )
 
+// procRoot is the procfs mount point.
+const procRoot = "/proc"
+
 // linuxLockRow is one parsed /proc/locks line.
 type linuxLockRow struct {
 	lockType string // POSIX | FLOCK | OFDLCK
@@ -35,7 +38,7 @@ func parseProcLocksPath(path string) ([]linuxLockRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var rows []linuxLockRow
 	sc := bufio.NewScanner(f)
@@ -136,12 +139,12 @@ func inodeToPaths() map[uint64]string {
 		if _, err := strconv.Atoi(d.Name()); err != nil {
 			continue
 		}
-		fds, err := os.ReadDir(filepath.Join("/proc", d.Name(), "fd"))
+		fds, err := os.ReadDir(filepath.Join(procRoot, d.Name(), "fd"))
 		if err != nil {
 			continue
 		}
 		for _, fd := range fds {
-			link, err := os.Readlink(filepath.Join("/proc", d.Name(), "fd", fd.Name()))
+			link, err := os.Readlink(filepath.Join(procRoot, d.Name(), "fd", fd.Name()))
 			if err != nil || strings.HasPrefix(link, "socket:") || strings.HasPrefix(link, "pipe:") {
 				continue
 			}

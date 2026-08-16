@@ -22,9 +22,11 @@ import (
 type procNetLine struct {
 	inode uint64
 	port  int
-	state string
 	addr  string
 }
+
+// procRoot is the procfs mount point.
+const procRoot = "/proc"
 
 // listenState is the TCP state code for LISTEN in /proc/net/tcp.
 const listenState = "0A"
@@ -156,7 +158,7 @@ func platformAllProcesses() ([]*Process, error) {
 		if err != nil {
 			continue
 		}
-		stat := filepath.Join("/proc", d.Name(), "stat")
+		stat := filepath.Join(procRoot, d.Name(), "stat")
 		ppid, name := procStatBasic(stat)
 		if name == "" {
 			continue
@@ -197,7 +199,7 @@ func parseProcNet(path string) ([]procNetLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var out []procNetLine
 	sc := bufio.NewScanner(f)
@@ -279,9 +281,7 @@ func decodeIPv6(hex string) string {
 		}
 	}
 	// IPv4-mapped: ::ffff:a.b.c.d
-	if b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 &&
-		b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0 &&
-		b[8] == 0 && b[9] == 0 && b[10] == 0xff && b[11] == 0xff {
+	if isIPv4Mapped(b) {
 		return fmt.Sprintf("%d.%d.%d.%d", b[12], b[13], b[14], b[15])
 	}
 	segs := make([]string, 8)
@@ -289,6 +289,13 @@ func decodeIPv6(hex string) string {
 		segs[i] = fmt.Sprintf("%x", (uint16(b[i*2])<<8)|uint16(b[i*2+1]))
 	}
 	return "[" + strings.Join(segs, ":") + "]"
+}
+
+// isIPv4Mapped reports whether b encodes ::ffff:a.b.c.d.
+func isIPv4Mapped(b []byte) bool {
+	return b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0 &&
+		b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0 &&
+		b[8] == 0 && b[9] == 0 && b[10] == 0xff && b[11] == 0xff
 }
 
 // inodeToPIDs maps socket inodes to owning PIDs by scanning /proc/*/fd.
@@ -306,12 +313,12 @@ func inodeToPIDs() map[uint64]int {
 		if err != nil {
 			continue
 		}
-		fds, err := os.ReadDir(filepath.Join("/proc", d.Name(), "fd"))
+		fds, err := os.ReadDir(filepath.Join(procRoot, d.Name(), "fd"))
 		if err != nil {
 			continue
 		}
 		for _, fd := range fds {
-			link, err := os.Readlink(filepath.Join("/proc", d.Name(), "fd", fd.Name()))
+			link, err := os.Readlink(filepath.Join(procRoot, d.Name(), "fd", fd.Name()))
 			if err != nil {
 				continue
 			}
@@ -337,12 +344,12 @@ func procStatBasic(path string) (ppid int, name string) {
 	}
 	s := string(data)
 	open := strings.Index(s, "(")
-	close := strings.LastIndex(s, ")")
-	if open < 0 || close < 0 || close <= open {
+	end := strings.LastIndex(s, ")")
+	if open < 0 || end < 0 || end <= open {
 		return 0, ""
 	}
-	name = s[open+1 : close]
-	rest := strings.Fields(s[close+1:])
+	name = s[open+1 : end]
+	rest := strings.Fields(s[end+1:])
 	if len(rest) < 2 {
 		return 0, name
 	}
@@ -359,11 +366,11 @@ func procStartTime(path string) uint64 {
 		return 0
 	}
 	s := string(data)
-	close := strings.LastIndex(s, ")")
-	if close < 0 {
+	end := strings.LastIndex(s, ")")
+	if end < 0 {
 		return 0
 	}
-	rest := strings.Fields(s[close+1:])
+	rest := strings.Fields(s[end+1:])
 	// rest[0]=state, rest[1]=ppid, ... rest[19]=starttime (field 22).
 	if len(rest) < 20 {
 		return 0
@@ -506,15 +513,15 @@ func cpuTotalTicks() int64 {
 }
 
 // procTicks returns (systemTotalTicks, processTicks).
-func procTicks(pid int) (int64, int64) {
-	total := cpuTotalTicks()
-	proc := int64(0)
+func procTicks(pid int) (total, proc int64) {
+	total = cpuTotalTicks()
+	proc = 0
 	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
 		s := string(data)
 		open := strings.Index(s, "(")
-		close := strings.LastIndex(s, ")")
-		if open >= 0 && close > open {
-			fields := strings.Fields(s[close+1:])
+		end := strings.LastIndex(s, ")")
+		if open >= 0 && end > open {
+			fields := strings.Fields(s[end+1:])
 			// utime = fields[11], stime = fields[12]
 			for _, idx := range []int{11, 12} {
 				if len(fields) > idx {
@@ -539,12 +546,12 @@ func platformIsAlive(pid int) bool {
 		return false
 	}
 	s := string(data)
-	close := strings.LastIndex(s, ")")
-	if close < 0 || close+2 >= len(s) {
+	end := strings.LastIndex(s, ")")
+	if end < 0 || end+2 >= len(s) {
 		return false
 	}
 	// Format: "pid (comm) STATE ..." — state is the first field after ")".
-	return s[close+2] != 'Z'
+	return s[end+2] != 'Z'
 }
 
 // platformParseCommand: on Linux the argv is stored verbatim and joined
