@@ -2,6 +2,7 @@ package ancestry
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -85,15 +86,18 @@ func TestBuildSelf(t *testing.T) {
 	if len(chain.Nodes) < 2 {
 		t.Error("expected at least target + parent in chain")
 	}
-	// Chain must reach PID 1 eventually.
-	foundRoot := false
-	for _, n := range chain.Nodes {
-		if n.PID == 1 {
-			foundRoot = true
+	// Chain must reach PID 1 eventually — on Unix. Windows has no PID-1
+	// equivalent (its root is the System process, PID 4).
+	if runtime.GOOS != "windows" {
+		foundRoot := false
+		for _, n := range chain.Nodes {
+			if n.PID == 1 {
+				foundRoot = true
+			}
 		}
-	}
-	if !foundRoot {
-		t.Error("chain should reach PID 1 (launchd/systemd)")
+		if !foundRoot {
+			t.Error("chain should reach PID 1 (launchd/systemd)")
+		}
 	}
 	text := chain.Text()
 	if !strings.Contains(text, "pid") {
