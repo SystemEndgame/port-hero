@@ -3,6 +3,7 @@ package inspector
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 func startTestServer(t *testing.T, dir string) int {
 	t.Helper()
 	if dir != "" {
-		if err := exec.Command("mkdir", "-p", dir).Run(); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 	}
@@ -74,6 +75,36 @@ func TestFindByPort(t *testing.T) {
 	}
 	if p.Project == "" {
 		t.Log("warning: project name empty")
+	}
+}
+
+func TestFindByPortUDP(t *testing.T) {
+	// Bind a real UDP socket and resolve it via the platform backend. This
+	// exercises the UDP path on every OS the tests run on.
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+
+	procs, err := FindByPortProto(port, "udp")
+	if err == ErrPortFree {
+		t.Skip("bound UDP socket not visible to the platform backend")
+	}
+	if err != nil {
+		t.Fatalf("FindByPortProto(udp): %v", err)
+	}
+	if len(procs) == 0 {
+		t.Fatal("no process found for the UDP socket")
+	}
+	for _, p := range procs {
+		if p.Protocol != "udp" {
+			t.Errorf("expected protocol udp, got %q", p.Protocol)
+		}
+		if p.Port != port {
+			t.Errorf("port = %d, want %d", p.Port, port)
+		}
 	}
 }
 

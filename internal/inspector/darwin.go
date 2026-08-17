@@ -61,7 +61,7 @@ func darwinProcessesForPIDs(pids []int) ([]*Process, error) {
 			CPUPercent: s.cpu,
 			CWD:        cwds[pid],
 		}
-		darwinEnrichArgv(p)
+		darwinEnrichNative(p)
 		procs = append(procs, p)
 	}
 	return procs, nil
@@ -114,7 +114,7 @@ func platformFindAll(proto string) ([]*Process, error) {
 			CPUPercent: s.cpu,
 			CWD:        cwds[e.pid],
 		}
-		darwinEnrichArgv(p)
+		darwinEnrichNative(p)
 		procs = append(procs, p)
 	}
 	return procs, nil
@@ -150,7 +150,7 @@ func platformGetProcessNoCPU(pid int) (*Process, error) {
 		CPUPercent: s.cpu,
 		CWD:        darwinCwds([]int{pid})[pid],
 	}
-	darwinEnrichArgv(p)
+	darwinEnrichNative(p)
 	return p, nil
 }
 

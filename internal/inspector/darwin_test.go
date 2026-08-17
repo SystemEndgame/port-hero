@@ -37,9 +37,9 @@ func TestDarwinCommandLine(t *testing.T) {
 	t.Logf("argv[0]=%q argv=%q", argv[0], argv)
 }
 
-func TestDarwinEnrichArgv(t *testing.T) {
+func TestDarwinEnrichNative(t *testing.T) {
 	p := &Process{PID: os.Getpid(), Name: "stale", Command: "stale command"}
-	darwinEnrichArgv(p)
+	darwinEnrichNative(p)
 	if p.Command == "stale command" {
 		t.Error("expected exact argv to replace the ps-derived command")
 	}
@@ -48,6 +48,10 @@ func TestDarwinEnrichArgv(t *testing.T) {
 	}
 	if p.Name == "stale" {
 		t.Error("expected name to be derived from the executable path")
+	}
+	// Start time must be populated on the current macOS layout.
+	if p.StartTime == 0 {
+		t.Error("expected start time from PROC_PIDTBSDINFO")
 	}
 }
 

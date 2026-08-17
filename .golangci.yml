@@ -57,6 +57,10 @@ linters:
         # rejects foreign processes).
         - G204
         - G304
+        # G103: darwin_proc.go calls the raw libproc `proc_info` syscall with
+        # an audited unsafe buffer pointer (the only cgo-free way to use it);
+        # buffers are fixed-size and stack-local.
+        - G103
   exclusions:
     rules:
       - path: _test\.go
