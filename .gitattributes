@@ -1,0 +1,7 @@
+# Go source must stay LF in the working tree regardless of the platform
+# checkout, or `gofmt -l` reports every file as unformatted on Windows.
+*.go text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
