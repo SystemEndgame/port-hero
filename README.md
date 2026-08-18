@@ -425,7 +425,7 @@ Port Hero never escalates privileges and only inspects what the invoking user ca
 
 ## 📜 Changelog
 
-### v0.3.0 (unreleased)
+### v0.3.0
 - **UDP support** — `--udp` / `--protocol tcp|udp` across macOS, Linux and Windows (pure-Go `/proc/net/udp{,6}` on Linux).
 - **Exact command-line everywhere** — macOS now reads the true argv via `KERN_PROCARGS2` (env excluded); Linux via `/proc/<pid>/cmdline`.
 - **PID-reuse protection on macOS** — start-time verification via `PROC_PIDTBSDINFO` (libproc), matching Linux pidfd.
