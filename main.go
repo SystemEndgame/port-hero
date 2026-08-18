@@ -18,6 +18,7 @@
 //	port --json                   machine-readable dump of all listeners
 //	port 3000 --json              machine-readable dump of one port
 //	port 3000 --kill --json       machine-readable kill result
+//	port --json --jq '.[].name'   filter any --json output with a jq expression
 //	port --completion bash        print a shell completion script
 //	port --version                print version
 //
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/itchyny/gojq"
 
 	"github.com/SystemEndgame/port-hero/internal/ancestry"
 	"github.com/SystemEndgame/port-hero/internal/cli"
@@ -66,6 +68,7 @@ type options struct {
 	next        bool
 	timeout     time.Duration
 	protocol    string
+	jq          string
 	completion  string
 	logLevel    string
 	logFormat   string
@@ -302,6 +305,9 @@ func (o *options) validate() error {
 	if err := o.validateTargets(); err != nil {
 		return err
 	}
+	if err := o.validateScripting(); err != nil {
+		return err
+	}
 	return o.validateLogging()
 }
 
@@ -314,10 +320,19 @@ func (o *options) validateTargets() error {
 		return fmt.Errorf("--all requires --kill, --force or --restart")
 	case o.dryRun && !o.kill && !o.force && !o.restart:
 		return fmt.Errorf("--dry-run requires --kill, --force or --restart")
+	}
+	return nil
+}
+
+// validateScripting checks the CI / scripting flags (--check, --wait, --jq).
+func (o *options) validateScripting() error {
+	switch {
 	case o.check && o.port <= 0:
 		return fmt.Errorf("--check requires a port (e.g. port --check 3000)")
 	case o.wait && o.port <= 0:
 		return fmt.Errorf("--wait requires a port (e.g. port --wait 3000 --timeout 30s)")
+	case o.jq != "" && !o.json:
+		return fmt.Errorf("--jq requires --json (e.g. port --json --jq '.[0].name')")
 	}
 	return nil
 }
@@ -389,7 +404,7 @@ func setBoolFlag(o *options, a string) {
 func isValueFlag(a string) bool {
 	return a == "--pid" || a == "--file" || a == "--completion" ||
 		a == "--log-level" || a == "--log-format" || a == "--timeout" ||
-		a == "--protocol"
+		a == "--protocol" || a == "--jq"
 }
 
 // flagValue returns the value following a value flag.
@@ -427,6 +442,8 @@ func setValueFlag(o *options, a, val string) error {
 			return err
 		}
 		o.protocol = val
+	case "--jq":
+		o.jq = val
 	}
 	return nil
 }
@@ -459,6 +476,7 @@ USAGE:
   port --json              Machine-readable list of all listeners
   port 3000 --json         Machine-readable detail for one port
   port 3000 --kill --json  Machine-readable kill result
+  port --json --jq '.[] | select(.port > 8000)'  Filter JSON with jq
   port --completion bash   Print shell completion (bash|zsh|fish)
   port --log-level debug   Structured logging level (debug|info|warn|error)
   port --log-format json   Structured log format (text|json)
@@ -656,11 +674,58 @@ func runJSON(o *options) {
 	if procs == nil {
 		procs = []*inspector.Process{}
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(procs); err != nil {
+	data, err := json.MarshalIndent(procs, "", "  ")
+	if err != nil {
 		fatalExit(err, cli.ExitInternal)
 	}
+	if o.jq != "" {
+		if data, err = filterJQ(data, o.jq); err != nil {
+			fatalExit(err, cli.ExitInvalid)
+		}
+	}
+	fmt.Println(string(data))
+}
+
+// filterJQ applies a jq filter to JSON output using the pure-Go gojq engine
+// (github.com/itchyny/gojq) — no external jq binary is required, so the
+// single static binary and zero runtime dependencies are preserved. A single
+// result is printed as-is; multiple results are wrapped in a JSON array.
+func filterJQ(data []byte, filter string) ([]byte, error) {
+	query, err := gojq.Parse(filter)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --jq filter: %w", err)
+	}
+	var input any
+	if err := json.Unmarshal(data, &input); err != nil {
+		return nil, fmt.Errorf("invalid JSON input for --jq: %w", err)
+	}
+	iter := query.Run(input)
+	var results []any
+	for {
+		v, ok := iter.Next()
+		if !ok {
+			break
+		}
+		if err, ok := v.(error); ok {
+			return nil, err
+		}
+		results = append(results, v)
+	}
+	if len(results) == 0 {
+		return []byte("[]"), nil
+	}
+	if len(results) == 1 {
+		out, err := json.MarshalIndent(results[0], "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	out, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // Kill / force / restart.
@@ -705,25 +770,42 @@ func runAction(o *options, cfg *config.Config) {
 	}
 
 	if o.json {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if o.restart {
-			if restarts == nil {
-				restarts = []restart.Result{}
-			}
-			_ = enc.Encode(restarts)
-		} else {
-			if killResults == nil {
-				killResults = []killer.Result{}
-			}
-			_ = enc.Encode(killResults)
-		}
+		emitJSONAction(o, killResults, restarts)
 	}
 
 	if warned {
 		os.Exit(cli.ExitWarnings)
 	}
 	os.Exit(cli.ExitOK)
+}
+
+// emitJSONAction writes the kill/restart results as JSON, optionally filtered
+// through a jq expression.
+func emitJSONAction(o *options, killResults []killer.Result, restarts []restart.Result) {
+	var (
+		data []byte
+		err  error
+	)
+	if o.restart {
+		if restarts == nil {
+			restarts = []restart.Result{}
+		}
+		data, err = json.MarshalIndent(restarts, "", "  ")
+	} else {
+		if killResults == nil {
+			killResults = []killer.Result{}
+		}
+		data, err = json.MarshalIndent(killResults, "", "  ")
+	}
+	if err != nil {
+		fatalExit(err, cli.ExitInternal)
+	}
+	if o.jq != "" {
+		if data, err = filterJQ(data, o.jq); err != nil {
+			fatalExit(err, cli.ExitInvalid)
+		}
+	}
+	fmt.Println(string(data))
 }
 
 // performKillOne runs the Safety Shield and kill for a single process,

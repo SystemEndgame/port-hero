@@ -130,6 +130,7 @@ port --wait 3000 --timeout 90s   # wait with a custom timeout
 port --next 3000            # print the first free port at or above 3000
 port 53 --udp               # query UDP instead of TCP (DNS, NTP, mDNS…)
 port --protocol udp 3000    # same as --udp (tcp|udp)
+port --json --jq '.[].name' # filter any --json output with a jq expression
 port --version
 ```
 
@@ -143,6 +144,22 @@ port --version
 | `3` | Blocked by the Safety Shield / permission denied |
 | `4` | Invalid input or ambiguous match |
 | `5` | Internal error |
+
+### Filtering JSON output with jq
+
+`--jq` applies a full [jq](https://jqlang.github.io/jq/) expression to any
+`--json` output — listings, kill results and restart results. It runs on the
+pure-Go [`gojq`](https://github.com/itchyny/gojq) engine built into the
+binary, so **no external `jq` is required on any platform**.
+
+```bash
+port --json --jq '.[].name'                           # every process name
+port --json --jq '[.[] | select(.port > 8000) | {name, port}]'   # heavy listeners
+port --json --jq '[.[] | select(.project == "golively-app")]'    # one project
+port 3000 --kill --json --jq '.graceful'              # one field from a kill result
+```
+
+A single result is printed as-is; multiple results are wrapped in a JSON array.
 
 ### Causality example
 
@@ -249,8 +266,11 @@ launchd (pid 1)
 Port Hero's safety is **defence in depth**:
 
 1. **Guardrails (Safety Shield)** — every kill passes through [`guardrails.Check`](internal/guardrails/guardrails.go) before a single signal is sent. Critical protections (PID 1, kernel threads, system daemons, foreign processes, self-kill) can never be bypassed.
-2. **Identity re-verification** — immediately before signalling, the process is re-checked: alive, same owner, and same start time.
-3. **Atomic signalling** — on Linux every signal goes through a **pidfd** (`pidfd_open` + `pidfd_send_signal`), so a recycled PID returns `ESRCH` instead of being hit.
+2. **Identity re-verification** — immediately before signalling, the target is re-checked against the inspection snapshot: alive, same owner, and — where the platform exposes it — the same start time.
+   - **Linux** — start time from `/proc/<pid>/stat` (field 22).
+   - **macOS** — start time from `PROC_PIDTBSDINFO` (libproc). The best defence macOS offers; not atomic like pidfd.
+   - **Windows** — fresh `tasklist` re-query + owner check (start time is not exposed via tasklist).
+3. **Atomic signalling (Linux only)** — every signal goes through a **pidfd** (`pidfd_open` + `pidfd_send_signal`), so a recycled PID returns `ESRCH` instead of being hit. Strictly stronger than re-verification; macOS and Windows rely on layer 2.
 4. **Respawn awareness** — if the target is managed by a supervisor (launchd, systemd, npm, yarn, pm2…) that will restart it, Port Hero warns you before killing.
 5. **Zero escalation** — Port Hero never escalates privileges and never modifies system state outside the target process.
 
@@ -425,6 +445,9 @@ Port Hero never escalates privileges and only inspects what the invoking user ca
 | **VS Code extension** | Panel that surfaces `port-hero` results inline in the editor. |
 
 ## 📜 Changelog
+
+### v0.3.1 (unreleased)
+- **`--jq` filtering** — apply a jq expression to any `--json` output (listings, kill and restart results) using the pure-Go `gojq` engine built into the binary. No external `jq` required, works on every platform.
 
 ### v0.3.0
 - **UDP support** — `--udp` / `--protocol tcp|udp` across macOS, Linux and Windows (pure-Go `/proc/net/udp{,6}` on Linux).
