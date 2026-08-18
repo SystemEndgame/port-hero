@@ -4,15 +4,28 @@
 
 **The port manager that knows your projects.** Stop killing your databases by mistake.
 
-![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/github/license/SystemEndgame/port-hero)
 ![Release](https://img.shields.io/github/v/release/SystemEndgame/port-hero)
+![CI](https://img.shields.io/github/actions/workflow/status/SystemEndgame/port-hero/ci.yml?branch=main&label=CI)
 ![Stars](https://img.shields.io/github/stars/SystemEndgame/port-hero?style=social)
 ![Platforms](https://img.shields.io/badge/macOS-Linux-Windows-important)
 
 > **What's running on port 3000?** Port Hero answers in one command — the process, its **project name**, its **git branch**, its **container**, its **causality chain** ("why is it running?") — then lets you **kill it gracefully** or **kill & restart it** from a beautiful terminal UI.
 
 `lsof -i :3000` → `kill -9` → *"did I just kill my database?"* — never again.
+
+### Quick start
+
+```bash
+port 3000              # what is this, and whose project is it?
+port 3000 --why        # why is it running? (launchd → pm2 → node)
+port 3000 --kill       # graceful SIGTERM of the whole process tree
+port 3000 --kill --dry-run   # preview without sending a signal
+port 3000 --restart    # kill and respawn it, detached
+port 53 --udp          # UDP listeners too (DNS, NTP, mDNS…)
+port --check 3000 && echo busy || echo free   # CI scripting
+```
 
 </div>
 
@@ -36,7 +49,7 @@ git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 |---|---|
 | 🏷️ **Project-aware context** | The feature nobody else has: Port Hero knows **which project** owns a port — `golively-app · ⎇ feature/auth-flow [CLEAN]` — by walking up to the git repo root. It's a *developer workflow tool*, not a sysadmin utility. |
 | 🧬 **Causality engine — "why is this running?"** | Traces the full ancestry chain (`launchd → pm2 → node`) and identifies the supervisor, systemd unit / launchd label, container, and session. The witr-class feature, built in. |
-| 🔍 **Instant port → process resolution** | Pure-Go on Linux (`/proc/net/tcp` + inode→PID scan, zero dependencies). `lsof`+`ps` on macOS, `netstat`+PowerShell on Windows. |
+| 🔍 **Instant port → process resolution** | **TCP and UDP** (`--udp`). Pure-Go on Linux (`/proc/net/{tcp,udp}` + inode→PID scan, zero dependencies), `lsof` on macOS, `netstat` on Windows. |
 | 🔎 **Process tracing by name / PID** | `port node`, `port --pid 4821` — find every process by name or exact PID. |
 | 🔒 **File lock detection** | `port --file /path` reveals which process holds a lock (Linux `/proc/locks` pure-Go, macOS via `lsof`). |
 | 🌿 **Git branch detection** | Reads `.git/HEAD` directly (worktree-aware) — shows `⎇ feature/payment-fix [CLEAN]` in the UI. No `git` call needed for branches. |
@@ -45,12 +58,12 @@ git branch process, restart dev server, graceful kill SIGTERM, TUI cli tool
 | 🛡️ **Graceful termination** | `SIGTERM` to the whole tree → **1.5 s grace** → `SIGKILL` only if needed. Clean connection shutdown, no data corruption. |
 | 🚧 **The Safety Shield** | Refuses to touch **PID 1**, kernel threads, `launchd`/`systemd`/`sshd`/`dockerd` & 60+ system daemons, foreign users' processes, and well-known system ports (22 SSH, 53 DNS, 80, 443…). `--force` bypasses *warnings only* — critical protections can never be bypassed. |
 | 🖥️ **Terminal UI** | [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) — interactive list, rich detail view with causality chain, safety confirmations, result feedback. |
-| 🔁 **Kill & Restart** | Respawns the exact command **detached**, from its original working directory, with output logged to `~/.port-hero/restarts/`. |
+| 🔁 **Kill & Restart** | Respawns the exact command **detached** from its original working directory — **exact argv** everywhere (Linux `/proc/pid/cmdline`, macOS `KERN_PROCARGS2`), or the repo's `start` command from `.port-hero.yaml`. Output is logged to `~/.port-hero/restarts/`. |
 | 🚀 **Cross-platform single binary** | macOS (Intel/Apple Silicon), Linux, Windows. ~3.5 MB, starts in milliseconds, zero runtime dependencies. |
 | 🧪 **Scriptable** | `--json` output (including `--kill --json` / `--restart --json` for CI), meaningful exit codes (0–5), non-interactive `--kill` / `--force` / `--restart` for CI and shell pipelines. |
 | 🐚 **Shell completions** | `port --completion bash|zsh|fish` — tab completion for ports, flags and PIDs. |
 | ⚙️ **Config files** | Global `~/.port-hero/config.yaml` (grace period, whitelist, logging) **and** per-repo `.port-hero.yaml` (display name, start command) — discovered by walking up to the repository root. |
-| 🛡️ **PID-reuse protection** | On Linux, every signal is sent through a **pidfd** (atomic PID reference), so a recycled PID can never receive a signal meant for another process. On other platforms the owner + start-time are re-verified before signalling. |
+| 🛡️ **PID-reuse protection** | Every signal is safe against PID recycling: **pidfd** on Linux (atomic), **start-time verification** on macOS (`PROC_PIDTBSDINFO`) and Linux, plus owner re-verification before signalling. |
 | 👁️ **Dry-run preview** | `port 3000 --kill --dry-run` shows exactly what would be terminated without sending a single signal. |
 | 📝 **Structured logging** | `--log-level debug|info|warn|error` and `--log-format text|json` (stdlib `slog`) for CI audit trails and log aggregation. |
 
@@ -228,7 +241,17 @@ launchd (pid 1)
 - Protected system ports (22, 53, 80, 443, 3306, 5432…) raise an explicit confirmation dialog.
 - Graceful `SIGTERM` first, with a configurable grace period, so databases and servers close connections cleanly.
 - Process-tree termination is **child-first**, preventing orphaned workers.
-- Before any signal, the target's **identity is re-verified** (owner + Linux start-time) so a recycled PID can never be killed by mistake.
+- Before any signal, the target's **identity is re-verified** so a recycled PID can never be killed by mistake.
+
+### Security model
+
+Port Hero's safety is **defence in depth**:
+
+1. **Guardrails (Safety Shield)** — every kill passes through [`guardrails.Check`](internal/guardrails/guardrails.go) before a single signal is sent. Critical protections (PID 1, kernel threads, system daemons, foreign processes, self-kill) can never be bypassed.
+2. **Identity re-verification** — immediately before signalling, the process is re-checked: alive, same owner, and same start time.
+3. **Atomic signalling** — on Linux every signal goes through a **pidfd** (`pidfd_open` + `pidfd_send_signal`), so a recycled PID returns `ESRCH` instead of being hit.
+4. **Respawn awareness** — if the target is managed by a supervisor (launchd, systemd, npm, yarn, pm2…) that will restart it, Port Hero warns you before killing.
+5. **Zero escalation** — Port Hero never escalates privileges and never modifies system state outside the target process.
 
 ---
 
@@ -385,6 +408,40 @@ Port Hero never escalates privileges and only inspects what the invoking user ca
 - **Zero telemetry.** No network calls at any point (the only subprocesses are `lsof`/`ps` on macOS, `netstat`/PowerShell on Windows, and `git status` for the dirty check — all local).
 - Runs entirely on your machine; your processes and paths never leave it.
 - The installer script is plain-text and auditable.
+
+---
+
+## 🗺️ Roadmap
+
+| Area | What & why |
+|---|---|
+| **Windows native sockets** | Replace `netstat`/PowerShell with `GetExtendedTcpTable` / `GetExtendedUdpTable` (ntdll) — removes the .NET cold-start and the subprocess dependency entirely. |
+| **macOS native socket enumeration** | Full `PROC_PIDLISTFDS` + `PROC_PIDFDSOCKETINFO` walk to drop the `lsof` dependency (the `socket_fdinfo` layout is version-fragile; currently gated behind a tolerant size check). |
+| **Unix domain sockets** | `--unix /path/to.sock` — who is connected to this socket? Useful for Postgres, Redis and Docker control sockets. |
+| **`--jq` filtering** | `port --json --jq '.processes[] \| select(.project == "golively-app")'` for powerful scripting. |
+| **Registry / history** | Persistent history of kills & restarts (`~/.port-hero/history`) with undo-style metadata. |
+| **Network namespace awareness** | Label processes by container network namespace on Linux, so the same port in different namespaces doesn't look ambiguous. |
+| **VS Code extension** | Panel that surfaces `port-hero` results inline in the editor. |
+
+## 📜 Changelog
+
+### v0.3.0 (unreleased)
+- **UDP support** — `--udp` / `--protocol tcp|udp` across macOS, Linux and Windows (pure-Go `/proc/net/udp{,6}` on Linux).
+- **Exact command-line everywhere** — macOS now reads the true argv via `KERN_PROCARGS2` (env excluded); Linux via `/proc/<pid>/cmdline`.
+- **PID-reuse protection on macOS** — start-time verification via `PROC_PIDTBSDINFO` (libproc), matching Linux pidfd.
+- **Per-repo configuration** — `.port-hero.yaml` (display name + `start` command) discovered by walking up to the git root; `--restart` prefers it.
+- **Smart restart** — respawns via shell so `npm run dev` / `go run` / `docker compose up` round-trip quotes correctly.
+- **CI helpers** — `port --check`, `--wait`, `--next` for shell pipelines; Windows and macOS added to CI (now green on all three OSes).
+
+### v0.2.0
+- **The Safety Shield** — critical protections (PID 1, kernel threads, system daemons, foreign users, self-kill) that `--force` cannot bypass.
+- **pidfd atomic signalling on Linux** (`pidfd_open` + `pidfd_send_signal`) — closes the PID-reuse race.
+- **Respawn awareness** — warns when a supervisor (launchd, systemd, npm, yarn, pnpm, pm2, nodemon) will restart your target.
+- **Config files** — global `~/.port-hero/config.yaml` with grace period, whitelist and logging.
+- **`--all`, `--dry-run`, `--json` for kill/restart**, TTL caches, `slog` structured logging, fuzz tests, IPv6 decoding fix, SHA256-verified installer.
+
+### v0.1.0
+- Initial release — interactive TUI, port→process resolution, causality tracing, git branch detection, graceful tree kill.
 
 ---
 
