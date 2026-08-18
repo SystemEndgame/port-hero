@@ -9,7 +9,8 @@
 ![Release](https://img.shields.io/github/v/release/SystemEndgame/port-hero)
 ![CI](https://img.shields.io/github/actions/workflow/status/SystemEndgame/port-hero/ci.yml?branch=main&label=CI)
 ![Stars](https://img.shields.io/github/stars/SystemEndgame/port-hero?style=social)
-![Platforms](https://img.shields.io/badge/macOS-Linux-Windows-important)
+![Platforms](https://img.shields.io/badge/Platforms-macOS--Linux--Windows-important)
+[![Built by GoLive](https://img.shields.io/badge/built%20by-GoLive-6f42c1)](https://golive.ly)
 
 > **What's running on port 3000?** Port Hero answers in one command — the process, its **project name**, its **git branch**, its **container**, its **causality chain** ("why is it running?") — then lets you **kill it gracefully** or **kill & restart it** from a beautiful terminal UI.
 
