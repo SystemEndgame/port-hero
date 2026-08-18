@@ -15,19 +15,19 @@
 
 `lsof -i :3000` → `kill -9` → *"did I just kill my database?"* — never again.
 
+</div>
+
 ### Quick start
 
 ```bash
-port 3000              # what is this, and whose project is it?
-port 3000 --why        # why is it running? (launchd → pm2 → node)
-port 3000 --kill       # graceful SIGTERM of the whole process tree
-port 3000 --kill --dry-run   # preview without sending a signal
-port 3000 --restart    # kill and respawn it, detached
-port 53 --udp          # UDP listeners too (DNS, NTP, mDNS…)
-port --check 3000 && echo busy || echo free   # CI scripting
+port 3000                  # what is this, and whose project is it?
+port 3000 --why            # why is it running? (launchd → pm2 → node)
+port 3000 --kill           # graceful SIGTERM of the whole process tree
+port 3000 --kill --dry-run # preview without sending a signal
+port 3000 --restart        # kill and respawn it, detached
+port 53 --udp              # UDP listeners too (DNS, NTP, mDNS…)
+port --check 3000          # exit 0 if busy, 2 if free (CI scripting)
 ```
-
-</div>
 
 <!--
 SEO keywords: port manager, kill process on port, what is running on port, find process using port,
