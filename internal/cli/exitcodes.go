@@ -7,14 +7,16 @@
 //	3  blocked by the Safety Shield or permission denied
 //	4  invalid input or ambiguous match
 //	5  internal error
+//	6  uncertain — ancestry chain incomplete (PID reuse, orphan, missing parent)
 package cli
 
 // Exit codes.
 const (
-	ExitOK       = 0
-	ExitWarnings = 1
-	ExitNotFound = 2
-	ExitBlocked  = 3
-	ExitInvalid  = 4
-	ExitInternal = 5
+	ExitOK          = 0
+	ExitWarnings    = 1
+	ExitNotFound    = 2
+	ExitBlocked     = 3
+	ExitInvalid     = 4
+	ExitInternal    = 5
+	ExitUncertain   = 6
 )

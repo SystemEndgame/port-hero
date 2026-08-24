@@ -23,11 +23,30 @@ type Node struct {
 	Supervisor string `json:"supervisor,omitempty"`
 }
 
+// Resolution describes how reliably the ancestry chain was resolved.
+type Resolution string
+
+const (
+	ResolutionResolved    Resolution = "resolved"     // full chain to PID 1, no gaps
+	ResolutionUnreachable Resolution = "unreachable"  // chain broken (parent exited, PID reused)
+	ResolutionUnknown    Resolution = "unknown"      // target process no longer exists
+	ResolutionOrphan     Resolution = "orphan"       // target alive but parent/session gone
+)
+
+// OrphanInfo describes orphan detection details.
+type OrphanInfo struct {
+	IsOrphan   bool   `json:"is_orphan"`
+	OrphanType string `json:"orphan_type,omitempty"` // "accidental" or "deliberate"
+	Detail     string `json:"detail,omitempty"`
+}
+
 // Chain is the full causal explanation for one process.
 type Chain struct {
 	TargetPID  int    `json:"target_pid"`
 	TargetName string `json:"target_name"`
 	Nodes      []Node `json:"causality_chain"`
+	// Resolution indicates how reliably the chain was resolved.
+	Resolution Resolution `json:"resolution"`
 	// Source is the primary system responsible for the target (best effort).
 	Source string `json:"source,omitempty"`
 	// Service is the service/unit name (systemd unit, launchd label…).
@@ -36,12 +55,15 @@ type Chain struct {
 	Container string `json:"container,omitempty"`
 	// Session describes the controlling session when detectable.
 	Session string `json:"session,omitempty"`
+	// Orphan contains orphan detection details.
+	Orphan *OrphanInfo `json:"orphan,omitempty"`
 	// Warnings collects non-blocking observations.
 	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Build walks the parent chain of pid up to the root process and enriches
-// every link with supervisor/source detection.
+// every link with supervisor/source detection. It also detects PID reuse,
+// orphan processes, and sets the resolution field.
 func Build(pid int) (*Chain, error) {
 	procs, err := inspector.AllProcesses()
 	if err != nil {
@@ -54,20 +76,46 @@ func Build(pid int) (*Chain, error) {
 		}
 	}
 
+	chain := &Chain{TargetPID: pid, Resolution: ResolutionUnknown}
+	target, targetExists := byPID[pid]
+	if !targetExists {
+		// Target no longer exists — we cannot build a chain, but we still
+		// include a node for the target PID so callers can see what was asked.
+		chain.Nodes = append(chain.Nodes, Node{PID: pid})
+		chain.Warnings = append(chain.Warnings, "target process no longer exists")
+		return chain, nil
+	}
+	chain.TargetName = target.Name
+
 	// Collect the chain: target first, then parents until PID 1 or loop.
+	// Along the way, validate that each parent's start_time is before the
+	// child's start_time to detect PID reuse.
 	seen := map[int]bool{}
 	var ids []int
+	var pidReuse bool
 	for cur := pid; cur > 0 && !seen[cur]; cur = parentOf(byPID, cur) {
 		seen[cur] = true
 		ids = append(ids, cur)
+
+		// PID reuse detection: verify parent started before child.
+		if len(ids) >= 2 {
+			child := ids[len(ids)-2]
+			parent := cur
+			if cp, ok := byPID[child]; ok {
+				if pp, ok := byPID[parent]; ok {
+					if pp.StartTime > 0 && cp.StartTime > 0 && pp.StartTime >= cp.StartTime {
+						pidReuse = true
+						chain.Warnings = append(chain.Warnings,
+							fmt.Sprintf("possible PID reuse at pid %d: parent started after child", parent))
+						break
+					}
+				}
+			}
+		}
+
 		if cur == 1 {
 			break
 		}
-	}
-
-	chain := &Chain{TargetPID: pid}
-	if p, ok := byPID[pid]; ok {
-		chain.TargetName = p.Name
 	}
 
 	// Fetch enriched info for up to the first 24 ancestors (bounded).
@@ -93,10 +141,20 @@ func Build(pid int) (*Chain, error) {
 		chain.Nodes = append(chain.Nodes, node)
 	}
 
+	// Determine resolution.
+	if pidReuse {
+		chain.Resolution = ResolutionUnreachable
+	} else if len(ids) > 0 && ids[len(ids)-1] == 1 {
+		chain.Resolution = ResolutionResolved
+	} else {
+		chain.Resolution = ResolutionUnreachable
+	}
+
 	chain.Container = inspector.ProcessContainer(pid)
 	chain.Source = detectSource(chain.Nodes)
 	chain.Service = detectService(pid)
 	chain.Session = detectSession(chain.Nodes)
+	chain.Orphan = detectOrphan(chain, byPID)
 	chain.Warnings = buildWarnings(chain)
 	return chain, nil
 }
@@ -181,6 +239,52 @@ func detectSource(nodes []Node) string {
 	return "unknown"
 }
 
+// detectOrphan checks whether the target process is an orphan (parent/session
+// leader no longer exists). It distinguishes accidental orphans (started from
+// a shell session that ended) from deliberate ones (nohup, setsid, tmux).
+func detectOrphan(c *Chain, byPID map[int]*inspector.Process) *OrphanInfo {
+	if len(c.Nodes) < 2 {
+		return nil
+	}
+
+	// The target's parent is the second node (index 1).
+	parent := c.Nodes[1]
+	parentAlive := false
+	if _, ok := byPID[parent.PID]; ok {
+		parentAlive = true
+	}
+
+	if parentAlive {
+		return nil
+	}
+
+	// Parent is gone — this is an orphan. Determine if accidental or deliberate.
+	info := &OrphanInfo{IsOrphan: true}
+
+	// Check for deliberate orphan indicators in the target's command/argv.
+	target := c.Nodes[0]
+	isDeliberate := false
+	cmd := strings.ToLower(target.Command)
+
+	if strings.Contains(cmd, "nohup") || strings.Contains(cmd, "setsid") {
+		isDeliberate = true
+		info.Detail = "started with " + target.Command
+	}
+	if strings.Contains(cmd, "tmux") || strings.Contains(cmd, "screen") {
+		isDeliberate = true
+		info.Detail = "running inside " + target.Name + " session"
+	}
+
+	if isDeliberate {
+		info.OrphanType = "deliberate"
+	} else {
+		info.OrphanType = "accidental"
+		info.Detail = fmt.Sprintf("parent process (pid %d) no longer exists", parent.PID)
+	}
+
+	return info
+}
+
 func buildWarnings(c *Chain) []string {
 	var w []string
 	if c.Container != "" {
@@ -188,6 +292,12 @@ func buildWarnings(c *Chain) []string {
 	}
 	if c.Source == "" || c.Source == "unknown" {
 		w = append(w, "could not determine how this process was started")
+	}
+	if c.Resolution == ResolutionUnreachable {
+		w = append(w, "ancestry chain is incomplete — possible PID reuse or missing parent")
+	}
+	if c.Orphan != nil && c.Orphan.IsOrphan && c.Orphan.OrphanType == "accidental" {
+		w = append(w, "accidental orphan: "+c.Orphan.Detail)
 	}
 	return w
 }
