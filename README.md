@@ -144,6 +144,7 @@ port --version
 | `3` | Blocked by the Safety Shield / permission denied |
 | `4` | Invalid input or ambiguous match |
 | `5` | Internal error |
+| `6` | Uncertain — ancestry chain incomplete (PID reuse, orphan, missing parent) |
 
 ### Filtering JSON output with jq
 
